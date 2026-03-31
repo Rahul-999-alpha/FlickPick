@@ -368,6 +368,35 @@ open FlickPick.xcodeproj
 - Only link `MPVKit-GPL` and `GRDB` frameworks (not `MPVKit` or `GRDB-dynamic`)
 - Metal API Validation may need to be disabled for HDR video playback (Edit Scheme → Run → Diagnostics)
 
+### Version Bump
+
+When bumping the version, update all three places and tag:
+
+```bash
+# 1. Update version.json
+#    Edit "version" field to new semver (e.g., "0.2.0")
+#    Increment "build" number
+
+# 2. Update Xcode project (both Debug and Release configs)
+sed -i '' 's/MARKETING_VERSION = OLD;/MARKETING_VERSION = NEW;/g' FlickPick.xcodeproj/project.pbxproj
+
+# 3. Commit, tag, push
+git add version.json FlickPick.xcodeproj/project.pbxproj
+git commit -m "Bump version to vX.Y.Z"
+git tag -a vX.Y.Z -m "vX.Y.Z — description"
+git push origin master --tags
+```
+
+**Files to update:**
+1. `version.json` — `version` field + increment `build`
+2. `FlickPick.xcodeproj/project.pbxproj` — `MARKETING_VERSION` (appears twice: Debug + Release)
+3. Git tag — `vX.Y.Z`
+
+**Semver rules for this project:**
+- **Patch** (0.1.x): bug fixes, small tweaks (e.g., fix video resize)
+- **Minor** (0.x.0): new features from the v1 scope list (e.g., subtitle UI, file associations)
+- **Major** (x.0.0): v1.0.0 = all v1 scope features complete and stable
+
 ---
 
 ## Git
