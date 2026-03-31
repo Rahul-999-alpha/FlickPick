@@ -9,6 +9,7 @@ FlickPick is a macOS-native media player built on **Swift + SwiftUI + libmpv**. 
 3. **No server required** — unlike Plex/Jellyfin, it's a lightweight desktop app.
 
 **Target:** macOS only, Apple Silicon native (M-series chips).
+**Version:** 0.1.0 (initial build — core functionality working)
 
 ---
 
@@ -16,39 +17,41 @@ FlickPick is a macOS-native media player built on **Swift + SwiftUI + libmpv**. 
 
 | Concern | Choice |
 |---------|--------|
-| Language | Swift 6 |
+| Language | Swift 5 |
 | UI | SwiftUI |
-| Playback | libmpv via MPVKit (SPM) |
-| Video Rendering | NSViewRepresentable + CAMetalLayer + mpv Metal render API |
+| Playback | libmpv via MPVKit-GPL (SPM) |
+| Video Rendering | NSViewControllerRepresentable + CAMetalLayer (MoltenVK/Vulkan) |
 | Database | GRDB.swift + SQLite |
 | File Watching | FSEvents (CoreServices) |
-| Thumbnails | AVAssetImageGenerator + mpv fallback |
+| Thumbnails | AVAssetImageGenerator |
 | Package Manager | Swift Package Manager |
 
 ### SPM Dependencies
 
-| Package | URL | Purpose |
-|---------|-----|---------|
-| MPVKit | `https://github.com/mpvkit/MPVKit` | Pre-built libmpv xcframework |
-| GRDB.swift | `https://github.com/groue/GRDB.swift` | SQLite with reactive observation |
+| Package | URL | Product Used | Purpose |
+|---------|-----|-------------|---------|
+| MPVKit | `https://github.com/mpvkit/MPVKit` | **MPVKit-GPL** | Pre-built libmpv xcframework |
+| GRDB.swift | `https://github.com/groue/GRDB.swift` | **GRDB** | SQLite with reactive observation |
+
+**Important:** Only `MPVKit-GPL` and `GRDB` should be linked. Do NOT also link `MPVKit` or `GRDB-dynamic` — causes duplicate framework build errors.
 
 ---
 
 ## Architecture Overview
 
 ```
-SwiftUI Views (Home, Player, Collection, CommandPalette, Settings)
+SwiftUI Views (Home, Player, Collection, CommandPalette, Settings, Onboarding)
        |
 ViewModels (LibraryViewModel, PlayerViewModel, SettingsViewModel)
        |
 Core Services:
-  - MPVPlayer     — libmpv wrapper, Metal rendering, event loop
+  - MPVPlayer     — libmpv wrapper, Metal rendering via CAMetalLayer, event loop
   - SmartEngine   — filename pattern matching, fuzzy grouping, natural sort
   - LibraryManager — FSEvents file watching, thumbnail gen, indexing
   - WatchHistory  — resume positions, On Deck logic, watched state
   - Database      — GRDB/SQLite, schema, repositories
        |
-libmpv (xcframework) + macOS frameworks (Metal, AVFoundation, CoreServices)
+libmpv (xcframework via MoltenVK/Vulkan) + macOS frameworks (Metal, AVFoundation, CoreServices)
 ```
 
 See `ARCHITECTURE.md` for the full module breakdown, data flow diagrams, and schema.
@@ -56,138 +59,134 @@ See `DESIGN.md` for UI/UX specs, screen wireframes, color system, and feature sc
 
 ---
 
-## Project Structure to Create
+## Project Structure (actual, v0.1.0)
 
 ```
-FlickPick/
-├── FlickPick/
-│   ├── App/
-│   │   └── FlickPickApp.swift           — @main, WindowGroup, app lifecycle
+FlickPick/                          ← Git root
+├── FlickPick.xcodeproj/
+├── FlickPick/                      ← Source code
+│   ├── FlickPickApp.swift          — @main, WindowGroup, dark theme
+│   ├── ContentView.swift           — Root router: Onboarding → Home → Player → Settings
+│   ├── Assets.xcassets/
+│   ├── ViewModels/
+│   │   ├── PlayerViewModel.swift   — Bridges MPVPlayer → SwiftUI, smart playlist, resume
+│   │   ├── LibraryViewModel.swift  — Drives Home screen, reactive GRDB observation
+│   │   └── SettingsViewModel.swift — Folder management
 │   ├── Views/
-│   │   ├── Onboarding/
-│   │   │   └── OnboardingView.swift     — First-launch folder picker (drag/drop)
+│   │   ├── Player/
+│   │   │   ├── PlayerView.swift    — Video surface + transport controls + keyboard shortcuts
+│   │   │   └── PlaylistPanel.swift — Slide-in playlist panel
 │   │   ├── Home/
-│   │   │   ├── HomeView.swift           — Main screen with carousels
+│   │   │   ├── HomeView.swift      — Netflix-style carousel layout
+│   │   │   ├── MediaCard.swift     — Thumbnail + progress bar + title
 │   │   │   ├── ContinueWatchingRow.swift
 │   │   │   ├── UpNextRow.swift
 │   │   │   ├── CollectionsRow.swift
 │   │   │   ├── RecentlyAddedRow.swift
-│   │   │   ├── MediaCard.swift          — Thumbnail + progress bar + title
 │   │   │   └── SurpriseMeButton.swift
 │   │   ├── Collection/
 │   │   │   └── CollectionDetailView.swift
-│   │   ├── Player/
-│   │   │   ├── PlayerView.swift         — Video + controls container
-│   │   │   ├── PlayerControlBar.swift   — Seek bar + transport controls
-│   │   │   ├── SeekBar.swift            — Custom: thumb preview, chapter marks
-│   │   │   ├── PlaylistPanel.swift      — Slide-in episode list
-│   │   │   └── FullscreenOverlay.swift  — Auto-hide fullscreen controls
 │   │   ├── Search/
-│   │   │   └── CommandPalette.swift     — Cmd+K fuzzy search
-│   │   └── Settings/
-│   │       └── SettingsView.swift
-│   ├── ViewModels/
-│   │   ├── LibraryViewModel.swift       — Drives Home, observes GRDB
-│   │   ├── PlayerViewModel.swift        — Bridges MPVPlayer → SwiftUI
-│   │   └── SettingsViewModel.swift
+│   │   │   └── CommandPalette.swift — Cmd+K fuzzy search
+│   │   ├── Settings/
+│   │   │   └── SettingsView.swift
+│   │   └── Onboarding/
+│   │       └── OnboardingView.swift — First-launch folder picker with drag/drop
 │   ├── Core/
 │   │   ├── MPVPlayer/
-│   │   │   ├── MPVPlayer.swift          — Owns mpv_handle, lifecycle
-│   │   │   ├── MPVRenderer.swift        — Metal render context + CAMetalLayer
-│   │   │   ├── MPVEventLoop.swift       — Wakeup callback → serial queue → drain
-│   │   │   ├── MPVProperties.swift      — Typed property observation
-│   │   │   ├── MPVCommand.swift         — Typed command wrappers
-│   │   │   └── MPVVideoView.swift       — NSView → NSViewRepresentable
+│   │   │   ├── MPVPlayer.swift     — Owns mpv_handle, Metal layer, event loop, controls
+│   │   │   ├── MPVPlayerDelegate.swift — Protocol for ViewModel event handling
+│   │   │   ├── MPVVideoView.swift  — NSViewControllerRepresentable bridge
+│   │   │   └── MetalLayer.swift    — CAMetalLayer with MoltenVK workarounds
 │   │   ├── SmartEngine/
-│   │   │   ├── PatternMatcher.swift     — Tier 1: regex sequence detection
-│   │   │   ├── FuzzyGrouper.swift       — Tier 2: longest common prefix
-│   │   │   ├── NaturalSort.swift        — Human sort (Ep 2 < Ep 10)
-│   │   │   ├── CollectionBuilder.swift  — Group files into franchises
-│   │   │   ├── FilenameTokenizer.swift  — Normalize separators, strip ext
-│   │   │   └── MediaType.swift          — Classify: episode vs movie vs standalone
+│   │   │   ├── PatternMatcher.swift — Tier 1: regex sequence detection (6 patterns)
+│   │   │   ├── FuzzyGrouper.swift  — Tier 2: longest common prefix grouping
+│   │   │   ├── NaturalSort.swift   — Human sort (Ep 2 < Ep 10)
+│   │   │   ├── CollectionBuilder.swift — Build playlists from sibling files
+│   │   │   ├── FilenameTokenizer.swift — Normalize separators, strip ext/tags
+│   │   │   └── MediaType.swift     — Classify: episode vs movie vs standalone
 │   │   ├── Library/
-│   │   │   ├── LibraryManager.swift     — Orchestrator: scan, watch, index
-│   │   │   ├── FileWatcher.swift        — FSEvents wrapper
-│   │   │   ├── ThumbnailGenerator.swift — AVAssetImageGenerator + mpv fallback
-│   │   │   └── FolderScanner.swift      — Walk folders, find media files
+│   │   │   ├── LibraryManager.swift — Orchestrator: scan, watch, index
+│   │   │   ├── FileWatcher.swift   — FSEvents wrapper (500ms batching)
+│   │   │   ├── ThumbnailGenerator.swift — AVAssetImageGenerator (320x180, cached)
+│   │   │   └── FolderScanner.swift — Walk folders, find & index media files
 │   │   ├── WatchHistory/
-│   │   │   ├── WatchHistory.swift       — Record/query watch state
-│   │   │   ├── OnDeckEngine.swift       — "What's next?" logic
-│   │   │   └── ResumeManager.swift      — Per-file position save/restore
+│   │   │   ├── WatchHistory.swift  — Convenience facade for watch state
+│   │   │   ├── OnDeckEngine.swift  — Continue Watching + Up Next logic
+│   │   │   └── ResumeManager.swift — Save position every 5s, resume on open
 │   │   └── Database/
-│   │       ├── AppDatabase.swift        — GRDB setup, migrations, WAL mode
+│   │       ├── AppDatabase.swift   — GRDB setup, migrations, WAL mode
 │   │       └── Repositories/
 │   │           ├── MediaFileRepository.swift
 │   │           ├── WatchRepository.swift
 │   │           └── CollectionRepository.swift
-│   ├── Models/
-│   │   ├── MediaFileRecord.swift        — GRDB record: path, base_name, seq, etc.
-│   │   ├── WatchRecord.swift            — position, completed, last_watched_at
-│   │   ├── CollectionRecord.swift       — name, type, total/watched counts
-│   │   └── WatchedFolderRecord.swift    — path, last_scanned_at
-│   ├── Resources/
-│   │   └── Assets.xcassets              — App icon, colors, images
-│   └── Supporting/
-│       ├── FlickPick-Bridging-Header.h  — #include <mpv/client.h> etc.
-│       ├── Info.plist                   — File associations, UTI declarations
-│       └── FlickPick.entitlements       — Hardened runtime, library validation
+│   └── Models/
+│       ├── MediaFileRecord.swift   — GRDB record: path, base_name, sequence, etc.
+│       ├── WatchRecord.swift       — position, completed, last_watched_at
+│       ├── CollectionRecord.swift  — name, type, total/watched counts
+│       └── WatchedFolderRecord.swift
 ├── DESIGN.md
 ├── ARCHITECTURE.md
-└── CLAUDE.md
+├── CLAUDE.md
+└── .gitignore
 ```
+
+**43 Swift files total.**
 
 ---
 
 ## Database Schema
 
 ```sql
+CREATE TABLE collections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    collectionType TEXT NOT NULL,  -- 'franchise', 'series'
+    totalItems INTEGER NOT NULL DEFAULT 0,
+    watchedItems INTEGER NOT NULL DEFAULT 0,
+    thumbnailPath TEXT,
+    createdAt DATETIME NOT NULL
+);
+
 CREATE TABLE media_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT UNIQUE NOT NULL,
     filename TEXT NOT NULL,
-    folder_path TEXT NOT NULL,
-    base_name TEXT,              -- "Harry Potter" (from SmartEngine)
-    sequence_num REAL,           -- 2.0 or 2005.0 (season*1000+ep)
-    media_type TEXT NOT NULL,    -- 'movie', 'episode', 'standalone'
-    collection_id INTEGER REFERENCES collections(id),
-    duration_seconds REAL,
-    file_size INTEGER,
-    thumbnail_path TEXT,
-    file_created_at TEXT,
-    indexed_at TEXT NOT NULL
+    folderPath TEXT NOT NULL,
+    baseName TEXT,
+    sequenceNum REAL,
+    mediaType TEXT NOT NULL,        -- 'movie', 'episode', 'standalone'
+    collectionId INTEGER REFERENCES collections(id) ON DELETE SET NULL,
+    durationSeconds REAL,
+    fileSize INTEGER,
+    thumbnailPath TEXT,
+    fileCreatedAt DATETIME,
+    indexedAt DATETIME NOT NULL
 );
 
 CREATE TABLE watch_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    media_file_id INTEGER NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
-    position_seconds REAL NOT NULL DEFAULT 0,
-    completed INTEGER NOT NULL DEFAULT 0,
-    last_watched_at TEXT NOT NULL,
-    watch_count INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(media_file_id)
-);
-
-CREATE TABLE collections (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    collection_type TEXT NOT NULL,  -- 'franchise', 'series'
-    total_items INTEGER NOT NULL DEFAULT 0,
-    watched_items INTEGER NOT NULL DEFAULT 0,
-    thumbnail_path TEXT,
-    created_at TEXT NOT NULL
+    mediaFileId INTEGER NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
+    positionSeconds REAL NOT NULL DEFAULT 0,
+    completed BOOLEAN NOT NULL DEFAULT 0,
+    lastWatchedAt DATETIME NOT NULL,
+    watchCount INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(mediaFileId)
 );
 
 CREATE TABLE watched_folders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT UNIQUE NOT NULL,
-    last_scanned_at TEXT NOT NULL
+    lastScannedAt DATETIME NOT NULL
 );
 
-CREATE INDEX idx_media_files_folder ON media_files(folder_path);
-CREATE INDEX idx_media_files_collection ON media_files(collection_id);
-CREATE INDEX idx_media_files_base_name ON media_files(base_name);
-CREATE INDEX idx_watch_history_last ON watch_history(last_watched_at DESC);
+CREATE INDEX idx_media_files_folder ON media_files(folderPath);
+CREATE INDEX idx_media_files_collection ON media_files(collectionId);
+CREATE INDEX idx_media_files_base_name ON media_files(baseName);
+CREATE INDEX idx_watch_history_last ON watch_history(lastWatchedAt);
 ```
+
+Note: Column names use camelCase in GRDB (Swift `Codable` convention), not snake_case.
 
 ---
 
@@ -195,68 +194,70 @@ CREATE INDEX idx_watch_history_last ON watch_history(last_watched_at DESC);
 
 ### MPVPlayer — libmpv Integration
 
-**Initialization:**
+**Actual initialization (MPVPlayer.swift):**
 ```swift
-let handle = mpv_create()
-mpv_set_option_string(handle, "vo", "libmpv")        // We provide render surface
-mpv_set_option_string(handle, "hwdec", "auto-safe")   // VideoToolbox
-mpv_set_option_string(handle, "keep-open", "yes")      // Don't close at EOF
-mpv_set_option_string(handle, "save-position-on-quit", "no") // We handle resume
-mpv_set_option_string(handle, "af", "loudnorm")        // Volume normalization
-mpv_initialize(handle)
+mpv = mpv_create()
+mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &metalLayer)  // Render into our Metal layer
+mpv_set_option_string(mpv, "vo", "gpu-next")
+mpv_set_option_string(mpv, "gpu-api", "vulkan")
+mpv_set_option_string(mpv, "gpu-context", "moltenvk")
+mpv_set_option_string(mpv, "hwdec", "videotoolbox")
+mpv_set_option_string(mpv, "keep-open", "yes")
+mpv_initialize(mpv)
 ```
 
-**Metal Rendering:**
-- Create `NSView` subclass backed by `CAMetalLayer`
-- Create `mpv_render_context` with `MPV_RENDER_API_TYPE_METAL`
-- `mpv_render_context_set_update_callback` → dispatch to render queue → `mpv_render_context_render()` into Metal drawable
-- Wrap in `NSViewRepresentable` for SwiftUI
+**Import:** `import Libmpv` (NOT `import mpv` — the MPVKit SPM module is named `Libmpv`)
 
-**Event Loop:**
-- `mpv_set_wakeup_callback` → dispatches to serial `DispatchQueue`
-- Drain loop: `while mpv_wait_event(handle, 0).event_id != MPV_EVENT_NONE { handle event }`
-- Property changes → update `@Published` on `@MainActor`
-- Key events: `FILE_LOADED`, `END_FILE`, `PROPERTY_CHANGE`, `SHUTDOWN`
+**Rendering approach:** mpv manages its own Vulkan/MoltenVK rendering pipeline. We pass it a `CAMetalLayer` via the `wid` option. mpv renders directly into this layer. We do NOT use `mpv_render_context` — that's an alternative approach. The `wid` approach is simpler and what MPVKit's demo uses.
 
-**Thread Safety:**
-- `mpv_wait_event` called from single serial queue only
+**MetalLayer workarounds:**
+- Override `drawableSize` setter to reject 1x1 sizes (MoltenVK bug causes flicker)
+- Override `wantsExtendedDynamicRangeContent` to dispatch to main thread (thread safety)
+
+**Event loop:**
+- `mpv_set_wakeup_callback` → serial `DispatchQueue` → `drainEvents()` loop
+- Property observations: `time-pos`, `duration`, `pause`, `eof-reached`, `volume`, `paused-for-cache`
+- Events: `FILE_LOADED`, `END_FILE`, `PROPERTY_CHANGE`, `SHUTDOWN`, `LOG_MESSAGE`
+- UI updates dispatched to `@MainActor` via `DispatchQueue.main.async`
+
+**Thread safety:**
+- `mpv_wait_event` called ONLY from the serial event queue
 - All other `mpv_*` functions are thread-safe
-- UI updates dispatched to `@MainActor`
+- Wakeup callback must NOT call `mpv_wait_event` — just signals the queue
 
 ### SmartEngine — Pattern Matching
 
-**Tier 1 — Regex patterns (covers ~70% of files):**
+**Tier 1 — Regex patterns (6 patterns, covers ~70%):**
 ```
-S(\d{1,2})E(\d{1,3})           → S01E03
-Season\s*(\d+).*Episode\s*(\d+) → Season 1 Episode 3
-[Ee]p(?:isode)?\s*(\d+)        → Episode 45
-Part\s*(\d+)                    → Part 2
-Vol(?:ume)?\s*(\d+)             → Vol 1
-^(.+?)\s*(\d+)\s               → Harry Potter 2 Chamber...
+S(\d{1,2})E(\d{1,3})           → S01E03       → episode, seq = season*1000+ep
+Season\s*(\d+).*Episode\s*(\d+) → Season 1 Ep 3 → episode
+[Ee]p(?:isode)?\s*(\d+)        → Episode 45    → episode
+Part\s*(\d+)                    → Part 2        → movie
+Vol(?:ume)?\s*(\d+)             → Vol 1         → movie
+^(.+?)\s*(\d{1,2})\s+(.+)$     → HP 2 Chamber... → movie (trailing number)
 ```
-
-Sequence number for TV: `season * 1000 + episode` (S02E05 = 2005.0)
 
 **Tier 2 — Fuzzy grouping (covers ~20% more):**
-1. Find longest common prefix among sibling files
-2. If >50% name overlap → same group
-3. Sort by year in filename or alphabetical
+1. Tokenize all sibling filenames (strip ext, replace separators)
+2. Find longest common prefix between pairs
+3. If overlap > 50% of shorter name length AND prefix >= 3 chars → same group
+4. Natural sort within group
 
-**Flow:** Tier 1 → Tier 2 → standalone (no playlist)
+**Flow:** Open file → Tier 1 → Tier 2 → standalone (no playlist)
 
 ### LibraryManager — File Watching
 
 **FSEvents (CoreServices):**
-- Watch registered folders for changes (add/delete/rename)
 - `kFSEventStreamCreateFlagFileEvents` for per-file notifications
 - 500ms batching latency
 - Zero CPU when nothing changes
+- On change: re-index only changed video files
 
 **Thumbnails:**
-- Primary: `AVAssetImageGenerator` at 10% of duration (HW accelerated)
-- Fallback: mpv screenshot for exotic formats
-- Cache: `~/Library/Caches/FlickPick/thumbs/{hash}.jpg`
+- `AVAssetImageGenerator` at 10% of duration (HW accelerated on Apple Silicon)
+- Cache: `~/Library/Caches/FlickPick/thumbs/{base64hash}.jpg`
 - Size: 320x180, async generation with placeholder
+- Actor-isolated (`ThumbnailGenerator` is an `actor`)
 
 **Supported extensions:**
 ```
@@ -267,76 +268,72 @@ Sequence number for TV: `season * 1000 + episode` (S02E05 = 2005.0)
 ### WatchHistory — Resume & On Deck
 
 - Save position to SQLite every 5 seconds during playback
+- Resume on file open: seek to saved position if > 5s
 - Mark completed when position > 90% of duration
-- One-tap resume: click card → seek to saved position (no dialog)
-- On Deck: find in-progress items → sort by last_watched_at → pair with SmartEngine for "Up Next"
+- One-tap resume: click card → loads and seeks automatically
+- On Deck: in-progress items → sort by `lastWatchedAt` → SmartEngine finds "Up Next"
+- Auto-advance: when EOF reached, plays next file in playlist
 
 ---
 
-## UI Design Summary
+## Known Issues (v0.1.0)
 
-### Color System
-
-| Token | Value | Usage |
-|-------|-------|-------|
-| Background | #0A0A0C | App background (near black) |
-| Surface | #161619 | Cards, panels |
-| Surface hover | #1E1E22 | Card hover |
-| Border | #2A2A30 | Subtle card borders |
-| Text primary | #E8E8ED | Titles |
-| Text secondary | #8B8B96 | Metadata |
-| Accent | #6366F1 | Progress bars, active states (indigo) |
-| Watched | #22C55E | Checkmarks (green) |
-| New badge | #F59E0B | Recently added (amber) |
-
-### Typography
-- SF Pro (system font) — Display for titles, Regular for body, Mono for timestamps
-- Card radius: 12px
-
-### Key Screens
-1. **Onboarding** — "Where do your movies live?" + drag/drop folder picker
-2. **Home** — Continue Watching, Up Next, Collections, Recently Added, Surprise Me
-3. **Collection Detail** — Grid of episodes with watched/unwatched state
-4. **Player (windowed)** — Persistent bottom control bar, seek thumbnails, chapter marks
-5. **Player (fullscreen)** — Auto-hide controls after 2s, semi-transparent gradient
-6. **Playlist Panel** — Slides from right, current episode highlighted
-7. **Command Palette** — Cmd+K, fuzzy search library + actions
-
-### Player Controls (windowed)
-- Row 1: Full-width seek bar with thumbnail preview on hover + chapter marks
-- Row 2: Speed | Prev | Play/Pause | Next | Time elapsed/remaining | Volume | Subtitles | Playlist | Fullscreen
-- Scroll wheel on video = volume (not seek)
-- Right-click context menu: audio tracks, subtitle tracks, speed, A-B loop
-
-### Player Controls (fullscreen)
-- Same layout, overlaid with semi-transparent gradient
-- Auto-hide after 2s of no mouse movement
-- Reappear on mouse move (bottom region)
-- Seek bar taller for easier targeting
+- **Video doesn't resize with window** — mpv's Metal layer frame needs to update on `viewDidLayout`. The `viewDidLayout` override exists but may not be triggering correctly through the SwiftUI bridge.
+- **No subtitle track selection UI** — mpv loads subtitles automatically (embedded + sidecar via `subs-match-os-language` and `subs-fallback`), but there's no UI to switch tracks yet.
+- **No volume normalization toggle** — `loudnorm` audio filter not yet wired up.
+- **No seek thumbnail preview** — seek bar works but doesn't show frame previews on hover.
+- **No right-click context menu** — audio/subtitle track selection, speed control not yet accessible.
+- **No file associations** — UTIs not registered in Info.plist yet.
+- **No app icon** — using default Xcode icon.
 
 ---
 
-## v1 Feature Scope
+## v0.1.0 Feature Status
 
-### Must-have
-- [ ] Home screen with Continue Watching, Up Next, Recently Added, Collections
-- [ ] Smart pattern matching (Tier 1 + Tier 2, offline)
-- [ ] Auto-collection grouping (franchise detection)
-- [ ] Natural sort everywhere
-- [ ] libmpv playback with Metal rendering
-- [ ] Persistent controls (windowed), auto-hide (fullscreen)
-- [ ] Seek bar with thumbnail preview
-- [ ] One-tap resume (click → back at exact position)
-- [ ] Volume normalization (loudnorm)
-- [ ] Progress bars on thumbnails
-- [ ] On Deck logic (hides finished, surfaces next)
-- [ ] Pre-play background art on selection
+### Working
+- [x] libmpv playback with Metal rendering (Vulkan/MoltenVK)
+- [x] VideoToolbox hardware decoding
+- [x] Smart pattern matching (Tier 1 regex + Tier 2 fuzzy)
+- [x] Auto-collection grouping (franchise detection)
+- [x] Natural sort everywhere
+- [x] Smart playlist auto-building (open HP2 → queues HP1-8)
+- [x] Auto-advance to next episode at EOF
+- [x] Home screen with Continue Watching, Up Next, Recently Added, Collections
+- [x] Netflix-style carousel layout
+- [x] Onboarding view (first-launch folder picker with drag/drop)
+- [x] Seek bar with drag-to-seek
+- [x] One-tap resume (saves position every 5s, restores on open)
+- [x] Progress bars on thumbnail cards
+- [x] On Deck logic (hides finished, surfaces next)
+- [x] Random picker ("Surprise Me")
+- [x] Command palette (Cmd+K search)
+- [x] Settings view (add/remove watched folders, rescan)
+- [x] FSEvents file watching (live index updates)
+- [x] Thumbnail generation (AVAssetImageGenerator, cached)
+- [x] Collection detail view (grid of episodes with watch state)
+- [x] Playlist panel (slide-in, press P)
+- [x] Fullscreen toggle (F key or double-click)
+- [x] Auto-hide controls in fullscreen (2.5s timeout)
+- [x] Keyboard controls (space, arrows, m, f, p, [ ])
+- [x] Drag & drop video files to play
+- [x] Dark theme forced
+- [x] GRDB reactive database (UI updates automatically on data changes)
+- [x] SQLite database with proper migrations
+- [x] App Sandbox disabled (required for file access + mpv dylib)
+
+### Not Yet Implemented (v1 scope)
+- [ ] Video resize with window (known bug)
+- [ ] Subtitle track selection UI
+- [ ] Audio track selection UI
+- [ ] Playback speed control
+- [ ] Volume normalization (loudnorm filter)
+- [ ] Seek bar thumbnail preview on hover
+- [ ] Pre-play background art
 - [ ] Smart filter playlists (genre, year, unwatched)
-- [ ] Random picker ("Surprise Me")
-- [ ] Command palette (Cmd+K)
-- [ ] First-launch folder picker
-- [ ] FSEvents file watching
-- [ ] Keyboard-first controls
+- [ ] Right-click context menu
+- [ ] File association (register UTIs in Info.plist)
+- [ ] App icon
+- [ ] Scroll wheel = volume control
 
 ### v2 (later)
 - [ ] Hover preview (3-5s clip on thumbnail hover)
@@ -358,13 +355,18 @@ Sequence number for TV: `season * 1000 + episode` (S02E05 = 2005.0)
 # Build from command line
 xcodebuild -scheme FlickPick -configuration Debug build
 
-# Run
-xcodebuild -scheme FlickPick -configuration Debug build
-open ./build/Debug/FlickPick.app
+# Clean build
+xcodebuild clean -scheme FlickPick
 
-# Clean
-xcodebuild clean
+# Open in Xcode
+open FlickPick.xcodeproj
+# Then Cmd+R to build and run
 ```
+
+**Xcode setup notes:**
+- App Sandbox must be **disabled** (`ENABLE_APP_SANDBOX = NO` in build settings)
+- Only link `MPVKit-GPL` and `GRDB` frameworks (not `MPVKit` or `GRDB-dynamic`)
+- Metal API Validation may need to be disabled for HDR video playback (Edit Scheme → Run → Diagnostics)
 
 ---
 
@@ -373,57 +375,3 @@ xcodebuild clean
 - **Remote:** `git@github.com-rahul:Rahul-999-alpha/FlickPick.git`
 - **Branch:** `master`
 - Uses SSH alias `github.com-rahul` (see root CLAUDE.md for SSH config)
-
----
-
-## Implementation Order (suggested)
-
-### Phase 1: Core Playback
-1. Set up Xcode project with SPM (MPVKit + GRDB)
-2. MPVPlayer module — init, load file, basic playback
-3. MPVRenderer — Metal rendering in NSViewRepresentable
-4. MPVEventLoop — property observation, time tracking
-5. Basic PlayerView — video + play/pause + seek
-
-### Phase 2: Smart Engine
-6. FilenameTokenizer + PatternMatcher (Tier 1)
-7. FuzzyGrouper (Tier 2)
-8. NaturalSort
-9. CollectionBuilder
-10. Test with real filenames
-
-### Phase 3: Database + Library
-11. AppDatabase — GRDB setup, migrations, schema
-12. Models (MediaFileRecord, WatchRecord, etc.)
-13. Repositories
-14. FolderScanner + LibraryManager
-15. FileWatcher (FSEvents)
-16. ThumbnailGenerator
-
-### Phase 4: Home Screen
-17. HomeView with carousel rows
-18. MediaCard component
-19. ContinueWatchingRow (reactive via GRDB ValueObservation)
-20. UpNextRow (SmartEngine integration)
-21. CollectionsRow + CollectionDetailView
-22. RecentlyAddedRow
-23. SurpriseMeButton
-
-### Phase 5: Player Polish
-24. Full PlayerControlBar
-25. Custom SeekBar with thumbnails + chapters
-26. PlaylistPanel (slide-in)
-27. FullscreenOverlay with auto-hide
-28. WatchHistory — save position, resume, mark completed
-29. Volume normalization toggle
-
-### Phase 6: Search + Settings
-30. CommandPalette (Cmd+K)
-31. SettingsView (manage folders, preferences)
-32. OnboardingView (first-launch)
-
-### Phase 7: Polish
-33. File association (register UTIs)
-34. App icon
-35. Keyboard shortcuts
-36. Edge cases (missing files, corrupt media, etc.)

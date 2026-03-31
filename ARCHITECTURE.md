@@ -78,44 +78,44 @@
 
 ```
 Core/MPVPlayer/
-├── MPVPlayer.swift          — Main class: owns mpv_handle, lifecycle
-├── MPVRenderer.swift        — Metal render context, CAMetalLayer bridge
-├── MPVEventLoop.swift       — Wakeup callback -> serial queue -> event drain
-├── MPVProperties.swift      — Typed property observation (time-pos, volume, etc.)
-├── MPVCommand.swift         — Typed command wrappers (loadfile, seek, pause)
-└── MPVVideoView.swift       — NSView subclass -> NSViewRepresentable for SwiftUI
+├── MPVPlayer.swift          — NSViewController: owns mpv_handle, Metal layer, event loop, controls
+├── MPVPlayerDelegate.swift  — Protocol for ViewModel event callbacks
+├── MPVVideoView.swift       — NSViewControllerRepresentable bridge for SwiftUI
+└── MetalLayer.swift         — CAMetalLayer subclass with MoltenVK workarounds
 ```
 
 #### How it works
 
-1. `MPVPlayer.init()` -> `mpv_create()` -> set options -> `mpv_initialize()`
-2. Video output set to `--vo=libmpv` (mpv doesn't create its own window)
-3. `MPVRenderer` creates a `mpv_render_context` with `MPV_RENDER_API_TYPE_METAL` pointed at a `CAMetalLayer`
-4. `MPVEventLoop` uses `mpv_set_wakeup_callback` -> dispatches to serial DispatchQueue -> drains events with `mpv_wait_event(handle, 0)` in a loop
-5. Property changes (`time-pos`, `pause`, `duration`, `eof-reached`) published via Combine `@Published` properties to ViewModels
-6. `MPVVideoView` wraps everything as `NSViewRepresentable` for SwiftUI
+1. `MPVPlayer` is an `NSViewController` subclass (not a plain class)
+2. `loadView()` creates an `NSView`, `viewDidLoad()` sets up the `MetalLayer` and calls `setupMPV()`
+3. `setupMPV()`: `mpv_create()` → set options → `mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &metalLayer)` → `mpv_initialize()`
+4. mpv renders directly into the `CAMetalLayer` via Vulkan/MoltenVK — we do NOT use `mpv_render_context`
+5. `mpv_set_wakeup_callback` → dispatches to serial `DispatchQueue` → `drainEvents()` loop
+6. Property changes dispatched to `@MainActor` via `delegate?.mpvPropertyChanged()`
+7. `MPVVideoView` wraps `MPVPlayer` as `NSViewControllerRepresentable` for SwiftUI
 
-#### Key mpv options
+#### Key mpv options (actual)
 
 ```
-vo=libmpv                    # We control the rendering surface
-hwdec=auto-safe              # VideoToolbox on Apple Silicon
+wid=<metalLayer pointer>     # Render into our Metal layer (not vo=libmpv)
+vo=gpu-next                  # Modern GPU rendering pipeline
+gpu-api=vulkan               # Vulkan via MoltenVK
+gpu-context=moltenvk         # MoltenVK context for macOS
+hwdec=videotoolbox           # Apple Silicon hardware decoding
 keep-open=yes                # Don't close at EOF (we control playlist)
-save-position-on-quit=no     # We handle resume ourselves in SQLite
-af=loudnorm                  # Volume normalization
 ```
 
 #### Rendering flow (per frame)
 
 ```
-mpv decodes frame
-  -> mpv_render_context_set_update_callback fires (arbitrary thread)
-  -> Dispatch to render queue
-  -> CAMetalLayer.nextDrawable()
-  -> mpv_render_context_render() into Metal texture
-  -> CAMetalLayer presents drawable
+mpv decodes frame (VideoToolbox HW acceleration)
+  -> mpv internal Vulkan/MoltenVK pipeline
+  -> Renders into CAMetalLayer (passed via wid option)
   -> Core Animation composites with SwiftUI overlay
 ```
+
+Note: We use the `wid` approach where mpv owns the full render pipeline, NOT the
+`mpv_render_context` approach where we'd manage Metal drawables ourselves.
 
 #### Event handling pattern
 
@@ -490,46 +490,39 @@ class PlayerViewModel: ObservableObject {
 
 ---
 
-## Project Structure
+## Project Structure (v0.1.0)
 
 ```
-FlickPick/
-├── FlickPick.xcodeproj
-├── FlickPick/
-│   ├── App/
-│   │   └── FlickPickApp.swift
-│   ├── Views/
-│   │   ├── Onboarding/
-│   │   ├── Home/
-│   │   ├── Collection/
-│   │   ├── Player/
-│   │   ├── Search/
-│   │   └── Settings/
+FlickPick/                          ← Git root
+├── FlickPick.xcodeproj/
+├── FlickPick/                      ← Source code (43 Swift files)
+│   ├── FlickPickApp.swift
+│   ├── ContentView.swift           — Root router
+│   ├── Assets.xcassets/
 │   ├── ViewModels/
-│   │   ├── LibraryViewModel.swift
 │   │   ├── PlayerViewModel.swift
+│   │   ├── LibraryViewModel.swift
 │   │   └── SettingsViewModel.swift
+│   ├── Views/
+│   │   ├── Player/   (PlayerView, PlaylistPanel)
+│   │   ├── Home/     (HomeView, MediaCard, 5 row components, SurpriseMeButton)
+│   │   ├── Collection/ (CollectionDetailView)
+│   │   ├── Search/   (CommandPalette)
+│   │   ├── Settings/ (SettingsView)
+│   │   └── Onboarding/ (OnboardingView)
 │   ├── Core/
-│   │   ├── MPVPlayer/
-│   │   ├── SmartEngine/
-│   │   ├── Library/
-│   │   ├── WatchHistory/
+│   │   ├── MPVPlayer/ (MPVPlayer, MPVPlayerDelegate, MPVVideoView, MetalLayer)
+│   │   ├── SmartEngine/ (PatternMatcher, FuzzyGrouper, NaturalSort, CollectionBuilder, FilenameTokenizer, MediaType)
+│   │   ├── Library/  (LibraryManager, FileWatcher, ThumbnailGenerator, FolderScanner)
+│   │   ├── WatchHistory/ (WatchHistory, OnDeckEngine, ResumeManager)
 │   │   └── Database/
-│   ├── Models/
-│   │   ├── MediaFileRecord.swift
-│   │   ├── WatchRecord.swift
-│   │   ├── CollectionRecord.swift
-│   │   └── WatchedFolderRecord.swift
-│   ├── Resources/
-│   │   └── Assets.xcassets
-│   └── Supporting/
-│       ├── FlickPick-Bridging-Header.h
-│       ├── Info.plist
-│       └── FlickPick.entitlements
-├── Package.swift
+│   │       ├── AppDatabase.swift
+│   │       └── Repositories/ (MediaFileRepository, WatchRepository, CollectionRepository)
+│   └── Models/ (MediaFileRecord, WatchRecord, CollectionRecord, WatchedFolderRecord)
 ├── DESIGN.md
 ├── ARCHITECTURE.md
-└── README.md
+├── CLAUDE.md
+└── .gitignore
 ```
 
 ---
