@@ -27,7 +27,6 @@ final class MPVPlayer: NSViewController {
 
         metalLayer.frame = view.bounds
         metalLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
-        metalLayer.contentsGravity = .resizeAspect
         metalLayer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         metalLayer.framebufferOnly = true
         metalLayer.backgroundColor = NSColor.black.cgColor
