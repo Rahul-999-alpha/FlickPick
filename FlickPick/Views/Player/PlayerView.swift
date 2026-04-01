@@ -9,8 +9,8 @@ struct PlayerView: View {
     @State private var showPlaylist = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Video + controls
+        ZStack(alignment: .trailing) {
+            // Video + controls (always full width — never resized)
             ZStack {
                 Color.black
 
@@ -76,10 +76,11 @@ struct PlayerView: View {
                 viewModel.resetControlsTimer()
             }
 
-            // Playlist panel
+            // Playlist panel (overlay — does not resize video surface)
             if showPlaylist && viewModel.playlist.count > 1 {
                 PlaylistPanel(viewModel: viewModel, isVisible: $showPlaylist)
                     .transition(.move(edge: .trailing))
+                    .shadow(radius: 10)
             }
         }
         .background(Color.black)
