@@ -79,8 +79,8 @@ final class MPVPlayer: NSViewController {
         check(mpv_set_option_string(mpv, "input-media-keys", "yes"))
         #endif
 
-        // Render into our Metal layer — pass the view pointer as wid
-        var wid = Int64(Int(bitPattern: Unmanaged.passUnretained(self.view).toOpaque()))
+        // Render into our Metal layer — mpv's MoltenVK backend expects a CAMetalLayer pointer
+        var wid = unsafeBitCast(metalLayer, to: Int64.self)
         check(mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &wid))
         check(mpv_set_option_string(mpv, "vo", "gpu-next"))
         check(mpv_set_option_string(mpv, "gpu-api", "vulkan"))
