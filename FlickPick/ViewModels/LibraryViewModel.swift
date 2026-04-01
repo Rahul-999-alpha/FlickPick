@@ -90,7 +90,7 @@ final class LibraryViewModel: ObservableObject {
             try WatchRecord.fetchCount(db)
         }
         .publisher(in: AppDatabase.shared.writer, scheduling: .immediate)
-        .debounce(for: .seconds(10), scheduler: DispatchQueue.main)
+        .debounce(for: .seconds(2), scheduler: DispatchQueue.main)
         .sink(
             receiveCompletion: { _ in },
             receiveValue: { [weak self] _ in
