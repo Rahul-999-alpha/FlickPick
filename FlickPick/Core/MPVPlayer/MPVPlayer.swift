@@ -27,10 +27,13 @@ final class MPVPlayer: NSViewController {
 
         metalLayer.frame = view.bounds
         metalLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        metalLayer.contentsGravity = .resizeAspect
+        metalLayer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         metalLayer.framebufferOnly = true
         metalLayer.backgroundColor = NSColor.black.cgColor
         view.layer = metalLayer
         view.wantsLayer = true
+        view.autoresizesSubviews = true
 
         setupMPV()
 
@@ -89,6 +92,7 @@ final class MPVPlayer: NSViewController {
 
         // Playback behavior
         check(mpv_set_option_string(mpv, "keep-open", "yes"))
+        check(mpv_set_option_string(mpv, "keepaspect", "yes"))
         check(mpv_set_option_string(mpv, "ytdl", "no"))
 
         // Subtitle defaults
