@@ -141,8 +141,8 @@ enum PatternMatcher {
     // MARK: - Pattern: trailing number (Harry Potter 2 Chamber...)
 
     private static func matchTrailingNumber(_ tokenized: String, original: String, year: Int?) -> AnalysisResult? {
-        // Match: "Title 2 ..." where 2 is a sequence number (not a year)
-        let pattern = "^(.+?)\\s+(\\d{1,2})\\s+(.+)$"
+        // Match: "Title 2" or "Title 2 Subtitle" — trailing number is a sequence
+        let pattern = "^(.+?)\\s+(\\d{1,2})(?:\\s+.+)?$"
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: tokenized, range: NSRange(tokenized.startIndex..., in: tokenized)) else {
             return nil
@@ -150,10 +150,7 @@ enum PatternMatcher {
 
         let base = extractGroup(match, group: 1, in: tokenized)
         let numStr = extractGroup(match, group: 2, in: tokenized)
-        guard let num = Int(numStr), num < 100 else { return nil }
-
-        // Don't match if the number looks like a year
-        if num >= 1900 && num <= 2099 { return nil }
+        guard let num = Int(numStr), num > 0, num < 100 else { return nil }
 
         return AnalysisResult(
             originalFilename: original,

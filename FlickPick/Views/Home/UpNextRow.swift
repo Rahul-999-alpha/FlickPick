@@ -7,13 +7,14 @@ struct UpNextRow: View {
 
     var body: some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text("Up Next")
-                    .font(.title2.weight(.semibold))
-                    .padding(.horizontal, 24)
+                    .font(FP.sectionFont)
+                    .foregroundStyle(FP.textPrimary)
+                    .padding(.horizontal, FP.sectionPadding)
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 16) {
+                    LazyHStack(spacing: FP.cardSpacing) {
                         ForEach(items, id: \.path) { file in
                             MediaCard(
                                 file: file,
@@ -23,7 +24,7 @@ struct UpNextRow: View {
                             )
                         }
                     }
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, FP.sectionPadding)
                 }
             }
         }

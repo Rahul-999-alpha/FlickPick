@@ -22,7 +22,7 @@ enum FilenameTokenizer {
         // Replace common separators with space
         name = name.replacingOccurrences(of: ".", with: " ")
         name = name.replacingOccurrences(of: "_", with: " ")
-        name = name.replacingOccurrences(of: " - ", with: " ")
+        name = name.replacingOccurrences(of: "-", with: " ")
 
         // Strip content inside brackets like [720p] or (2002)
         name = name.replacingOccurrences(

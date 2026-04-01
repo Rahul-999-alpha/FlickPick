@@ -1,9 +1,10 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Root view — routes between Onboarding, Home, Player, Collection, and Settings.
-struct ContentView: View {
-    @ObservedObject var playerVM: PlayerViewModel
+/// Library window — routes between Onboarding, Home, Collection, and Settings.
+/// Player opens in a separate window via WindowManager.
+struct LibraryWindow: View {
+    @ObservedObject var windowManager: WindowManager
     @StateObject private var libraryVM = LibraryViewModel()
     @ObservedObject private var library = LibraryManager.shared
 
@@ -14,7 +15,6 @@ struct ContentView: View {
 
     enum Screen {
         case home
-        case player
         case collection
         case settings
     }
@@ -25,13 +25,12 @@ struct ContentView: View {
 
             // Command Palette overlay
             if showCommandPalette {
-                Color.black.opacity(0.4)
+                Color.black.opacity(0.5)
                     .ignoresSafeArea()
                     .onTapGesture { showCommandPalette = false }
 
                 CommandPalette(isPresented: $showCommandPalette) { file in
-                    playerVM.openRecord(file)
-                    currentScreen = .player
+                    windowManager.openPlayer(with: file)
                 }
             }
         }
@@ -39,11 +38,9 @@ struct ContentView: View {
             guard let provider = providers.first else { return false }
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url else { return }
-                // Validate it's a video file before opening
                 guard FilenameTokenizer.isVideoFile(url.path) else { return }
                 Task { @MainActor in
-                    playerVM.openFile(url)
-                    currentScreen = .player
+                    windowManager.openPlayer(with: url)
                 }
             }
             return true
@@ -57,11 +54,6 @@ struct ContentView: View {
                         Label("Home", systemImage: "house")
                     }
                 }
-
-                Button(action: openFileDialog) {
-                    Label("Open File", systemImage: "folder")
-                }
-                .keyboardShortcut("o")
 
                 Button {
                     showCommandPalette.toggle()
@@ -100,8 +92,7 @@ struct ContentView: View {
                 HomeView(
                     libraryVM: libraryVM,
                     onSelectFile: { file in
-                        playerVM.openRecord(file)
-                        currentScreen = .player
+                        windowManager.openPlayer(with: file)
                     },
                     onSelectCollection: { collection in
                         selectedCollection = collection
@@ -109,16 +100,12 @@ struct ContentView: View {
                     }
                 )
 
-            case .player:
-                PlayerView(viewModel: playerVM)
-
             case .collection:
                 if let collection = selectedCollection {
                     CollectionDetailView(
                         collection: collection,
                         onSelect: { file in
-                            playerVM.openRecord(file)
-                            currentScreen = .player
+                            windowManager.openPlayer(with: file)
                         },
                         onBack: { currentScreen = .home }
                     )
@@ -128,21 +115,6 @@ struct ContentView: View {
 
             case .settings:
                 SettingsView(library: library)
-            }
-        }
-    }
-
-    private func openFileDialog() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.allowedContentTypes = [.mpeg4Movie, .movie, .quickTimeMovie, .avi]
-        panel.begin { response in
-            if response == .OK, let url = panel.url {
-                Task { @MainActor in
-                    playerVM.openFile(url)
-                    currentScreen = .player
-                }
             }
         }
     }

@@ -8,22 +8,24 @@ struct PlaylistPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             headerView
-            Divider()
+            Divider().overlay(FP.border)
             listView
         }
         .frame(width: 280)
-        .background(.regularMaterial)
+        .background(FP.surface)
     }
 
     private var headerView: some View {
         HStack {
             Text(viewModel.playlistName.isEmpty ? "Playlist" : viewModel.playlistName)
-                .font(.headline)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(FP.textPrimary)
             Spacer()
             Button {
                 withAnimation { isVisible = false }
             } label: {
                 Image(systemName: "xmark")
+                    .foregroundStyle(FP.textSecondary)
             }
             .buttonStyle(.plain)
         }
@@ -33,8 +35,8 @@ struct PlaylistPanel: View {
     private var listView: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(0..<viewModel.playlist.count, id: \.self) { index in
-                    playlistRow(index: index, url: viewModel.playlist[index])
+                ForEach(Array(viewModel.playlist.enumerated()), id: \.element) { index, url in
+                    playlistRow(index: index, url: url)
                 }
             }
         }
@@ -48,18 +50,19 @@ struct PlaylistPanel: View {
                 if index == viewModel.currentIndex {
                     Image(systemName: "play.fill")
                         .font(.caption)
-                        .foregroundColor(.accentColor)
+                        .foregroundColor(FP.accent)
                         .frame(width: 20)
                 } else {
                     Text("\(index + 1)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .font(FP.monoFont)
+                        .foregroundStyle(FP.textSecondary)
                         .frame(width: 20)
                 }
 
                 Text(url.deletingPathExtension().lastPathComponent)
+                    .font(FP.bodyFont)
                     .lineLimit(1)
-                    .foregroundStyle(index == viewModel.currentIndex ? .primary : .secondary)
+                    .foregroundStyle(index == viewModel.currentIndex ? FP.textPrimary : FP.textSecondary)
 
                 Spacer()
             }
@@ -67,7 +70,7 @@ struct PlaylistPanel: View {
             .padding(.vertical, 8)
             .background(
                 index == viewModel.currentIndex
-                ? Color.accentColor.opacity(0.1)
+                ? FP.accentGlow
                 : Color.clear
             )
             .contentShape(Rectangle())

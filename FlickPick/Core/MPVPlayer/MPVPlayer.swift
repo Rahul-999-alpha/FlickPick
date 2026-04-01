@@ -104,6 +104,7 @@ final class MPVPlayer: NSViewController {
         mpv_observe_property(mpv, 0, "eof-reached", MPV_FORMAT_FLAG)
         mpv_observe_property(mpv, 0, "volume", MPV_FORMAT_DOUBLE)
         mpv_observe_property(mpv, 0, "paused-for-cache", MPV_FORMAT_FLAG)
+        mpv_observe_property(mpv, 0, "speed", MPV_FORMAT_DOUBLE)
 
         // Wakeup callback -> drain events on our serial queue
         // Use passUnretained — the view hierarchy owns our lifecycle
@@ -150,6 +151,16 @@ final class MPVPlayer: NSViewController {
     }
 
     // MARK: - Property access (thread-safe via lock)
+
+    func getString(_ name: String) -> String {
+        mpvLock.lock()
+        defer { mpvLock.unlock() }
+        guard mpv != nil else { return "" }
+        guard let cstr = mpv_get_property_string(mpv, name) else { return "" }
+        let result = String(cString: cstr)
+        mpv_free(cstr)
+        return result
+    }
 
     func getDouble(_ name: String) -> Double {
         mpvLock.lock()
@@ -294,6 +305,10 @@ final class MPVPlayer: NSViewController {
         case "paused-for-cache":
             if let value = UnsafePointer<Int32>(OpaquePointer(property.data))?.pointee {
                 DispatchQueue.main.async { [weak self] in self?.delegate?.mpvPropertyChanged(name, value: value != 0) }
+            }
+        case "speed":
+            if let value = UnsafePointer<Double>(OpaquePointer(property.data))?.pointee {
+                DispatchQueue.main.async { [weak self] in self?.delegate?.mpvPropertyChanged(name, value: value) }
             }
         default:
             break

@@ -1,6 +1,6 @@
 {
-  "version": "0.1.1",
-  "build": 2,
+  "version": "0.1.2",
+  "build": 3,
   "name": "FlickPick",
   "description": "macOS-native media player with smart playlists and Netflix-style home screen"
 }

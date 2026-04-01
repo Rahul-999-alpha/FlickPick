@@ -14,15 +14,16 @@ struct OnboardingView: View {
 
             Image(systemName: "film.stack.fill")
                 .font(.system(size: 64))
-                .foregroundStyle(.tint)
+                .foregroundStyle(FP.accent)
 
             VStack(spacing: 8) {
                 Text("Welcome to FlickPick")
-                    .font(.largeTitle.weight(.bold))
+                    .font(FP.titleFont)
+                    .foregroundStyle(FP.textPrimary)
 
                 Text("Where do your movies and shows live?")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
+                    .font(FP.subtitleFont.weight(.regular))
+                    .foregroundStyle(FP.textSecondary)
             }
 
             // Drop zone
@@ -30,24 +31,25 @@ struct OnboardingView: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 16)
                         .strokeBorder(
-                            isDragOver ? Color.accentColor : Color.gray.opacity(0.3),
+                            isDragOver ? FP.accent : FP.border,
                             style: StrokeStyle(lineWidth: 2, dash: [8])
                         )
                         .frame(width: 400, height: 160)
                         .background(
                             RoundedRectangle(cornerRadius: 16)
-                                .fill(isDragOver ? Color.accentColor.opacity(0.05) : Color.clear)
+                                .fill(isDragOver ? FP.accentGlow : Color.clear)
                         )
 
                     VStack(spacing: 8) {
                         Image(systemName: "folder.badge.plus")
                             .font(.title)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(FP.textSecondary)
                         Text("Drag a folder here")
-                            .font(.headline)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(FP.textPrimary)
                         Text("or click below to browse")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(FP.captionFont)
+                            .foregroundStyle(FP.textSecondary)
                     }
                 }
                 .onDrop(of: [.fileURL], isTargeted: $isDragOver) { providers in
@@ -68,6 +70,7 @@ struct OnboardingView: View {
                     chooseFolder()
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(FP.accent)
                 .controlSize(.large)
             }
 
@@ -75,12 +78,12 @@ struct OnboardingView: View {
                 onSkip()
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(FP.textSecondary)
 
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(white: 0.04))
+        .background(FP.background)
     }
 
     private func chooseFolder() {
@@ -91,7 +94,9 @@ struct OnboardingView: View {
         panel.message = "Choose a folder with your movies or TV shows"
         panel.begin { response in
             if response == .OK, let url = panel.url {
-                onFolderSelected(url.path)
+                Task { @MainActor in
+                    onFolderSelected(url.path)
+                }
             }
         }
     }

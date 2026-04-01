@@ -7,23 +7,24 @@ struct ContinueWatchingRow: View {
 
     var body: some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text("Continue Watching")
-                    .font(.title2.weight(.semibold))
-                    .padding(.horizontal, 24)
+                    .font(FP.sectionFont)
+                    .foregroundStyle(FP.textPrimary)
+                    .padding(.horizontal, FP.sectionPadding)
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 16) {
+                    LazyHStack(spacing: FP.cardSpacing) {
                         ForEach(items, id: \.0.path) { file, watch in
                             MediaCard(
                                 file: file,
-                                watchProgress: file.durationSeconds.map { watch.positionSeconds / $0 } ?? 0,
+                                watchProgress: file.durationSeconds.map { min(1.0, watch.positionSeconds / max($0, 1)) } ?? 0,
                                 isCompleted: false,
                                 onTap: { onSelect(file) }
                             )
                         }
                     }
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, FP.sectionPadding)
                 }
             }
         }

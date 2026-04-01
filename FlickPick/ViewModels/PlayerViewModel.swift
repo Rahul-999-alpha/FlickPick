@@ -3,6 +3,25 @@ import Combine
 import AppKit
 import Libmpv
 
+/// Info about an audio or subtitle track from mpv.
+struct TrackInfo: Identifiable {
+    let id: Int
+    let type: String       // "audio", "sub", "video"
+    let title: String?
+    let lang: String?
+    let codec: String?
+    let isDefault: Bool
+
+    var displayName: String {
+        var parts: [String] = []
+        if let title, !title.isEmpty { parts.append(title) }
+        if let lang, !lang.isEmpty { parts.append("(\(lang))") }
+        if parts.isEmpty, let codec { parts.append(codec) }
+        if parts.isEmpty { parts.append("Track \(id)") }
+        return parts.joined(separator: " ")
+    }
+}
+
 /// Bridges MPVPlayer events into SwiftUI-friendly @Published state.
 @MainActor
 final class PlayerViewModel: ObservableObject {
@@ -25,6 +44,15 @@ final class PlayerViewModel: ObservableObject {
     @Published var currentIndex = 0
     @Published var playlistName = ""
 
+    // Tracks
+    @Published var subtitleTracks: [TrackInfo] = []
+    @Published var audioTracks: [TrackInfo] = []
+    @Published var currentSubtitleTrackId: Int = 0
+    @Published var currentAudioTrackId: Int = 0
+    @Published var playbackSpeed: Double = 1.0
+
+    static let availableSpeeds: [Double] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+
     // MARK: - Player reference
 
     weak var player: MPVPlayer?
@@ -39,7 +67,6 @@ final class PlayerViewModel: ObservableObject {
     private var terminationObserver: Any?
 
     init() {
-        // Save position on app quit
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: .main
@@ -55,10 +82,9 @@ final class PlayerViewModel: ObservableObject {
         controlsHideTask?.cancel()
     }
 
-    // MARK: - Smart open (with playlist building)
+    // MARK: - Smart open
 
     func smartOpen(_ url: URL) {
-        // Build smart playlist from sibling files
         if let playlistResult = CollectionBuilder.buildPlaylist(for: url) {
             playlist = playlistResult.files
             currentIndex = playlistResult.currentIndex
@@ -68,11 +94,9 @@ final class PlayerViewModel: ObservableObject {
             currentIndex = 0
             playlistName = ""
         }
-
         loadCurrentFile()
     }
 
-    /// Open from a MediaFileRecord (from Home screen)
     func openRecord(_ record: MediaFileRecord) {
         smartOpen(URL(fileURLWithPath: record.path))
     }
@@ -83,25 +107,11 @@ final class PlayerViewModel: ObservableObject {
 
     // MARK: - Playback controls
 
-    func togglePlayPause() {
-        player?.togglePause()
-    }
-
-    func play() {
-        player?.play()
-    }
-
-    func pause() {
-        player?.pause()
-    }
-
-    func seek(to seconds: Double) {
-        player?.seek(to: seconds)
-    }
-
-    func seekRelative(_ seconds: Double) {
-        player?.seekRelative(seconds)
-    }
+    func togglePlayPause() { player?.togglePause() }
+    func play() { player?.play() }
+    func pause() { player?.pause() }
+    func seek(to seconds: Double) { player?.seek(to: seconds) }
+    func seekRelative(_ seconds: Double) { player?.seekRelative(seconds) }
 
     func setVolume(_ vol: Double) {
         let clamped = min(max(vol, 0), 100)
@@ -129,6 +139,44 @@ final class PlayerViewModel: ObservableObject {
         isFileLoaded = false
         currentTime = 0
         duration = 0
+    }
+
+    // MARK: - Track selection
+
+    func setSubtitleTrack(_ trackId: Int) {
+        currentSubtitleTrackId = trackId
+        player?.setFlag("sid", trackId == 0 ? false : true)
+        if trackId > 0 {
+            player?.command("set", args: ["sid", String(trackId)])
+        } else {
+            player?.command("set", args: ["sid", "no"])
+        }
+    }
+
+    func setAudioTrack(_ trackId: Int) {
+        currentAudioTrackId = trackId
+        player?.command("set", args: ["aid", String(trackId)])
+    }
+
+    func cycleSubtitleTrack() {
+        player?.command("cycle", args: ["sub"])
+    }
+
+    func setSpeed(_ speed: Double) {
+        playbackSpeed = speed
+        player?.setDouble("speed", speed)
+    }
+
+    func increaseSpeed() {
+        guard let idx = Self.availableSpeeds.firstIndex(where: { $0 >= playbackSpeed }),
+              idx + 1 < Self.availableSpeeds.count else { return }
+        setSpeed(Self.availableSpeeds[idx + 1])
+    }
+
+    func decreaseSpeed() {
+        guard let idx = Self.availableSpeeds.lastIndex(where: { $0 <= playbackSpeed }),
+              idx > 0 else { return }
+        setSpeed(Self.availableSpeeds[idx - 1])
     }
 
     // MARK: - Playlist navigation
@@ -187,6 +235,9 @@ final class PlayerViewModel: ObservableObject {
         eofReached = false
         isFileLoaded = false
 
+        // Update window title
+        WindowManager.shared.updateTitle(currentTitle)
+
         player?.loadFile(url)
     }
 
@@ -208,6 +259,9 @@ final class PlayerViewModel: ObservableObject {
             self?.currentTime ?? 0
         }
 
+        // Refresh track list
+        refreshTrackList()
+
         // Index the file if not already
         let analysis = PatternMatcher.analyze(url.lastPathComponent)
         let record = MediaFileRecord.from(url: url, analysis: analysis)
@@ -217,17 +271,41 @@ final class PlayerViewModel: ObservableObject {
 
     private func onEndFile(reason: Int32) {
         resumeManager.finalSaveAndStop()
-
         guard let url = playlist[safe: currentIndex] else { return }
-
-        // Only mark completed and auto-advance on natural EOF
         guard reason == MPV_END_FILE_REASON_EOF.rawValue else { return }
-
         watchHistory.markCompleted(path: url.path)
+        if hasNext { playNext() }
+    }
 
-        if hasNext {
-            playNext()
+    private func refreshTrackList() {
+        guard let player else { return }
+
+        // Parse track-list from mpv
+        var subs: [TrackInfo] = []
+        var audio: [TrackInfo] = []
+
+        // Get track count
+        let count = Int(player.getDouble("track-list/count"))
+        for i in 0..<count {
+            let prefix = "track-list/\(i)"
+            let type = player.getString("\(prefix)/type")
+            let id = Int(player.getDouble("\(prefix)/id"))
+            let title = player.getString("\(prefix)/title")
+            let lang = player.getString("\(prefix)/lang")
+            let codec = player.getString("\(prefix)/codec")
+            let isDefault = player.getFlag("\(prefix)/default")
+
+            let track = TrackInfo(id: id, type: type, title: title.isEmpty ? nil : title,
+                                  lang: lang.isEmpty ? nil : lang, codec: codec.isEmpty ? nil : codec,
+                                  isDefault: isDefault)
+
+            if type == "sub" { subs.append(track) }
+            else if type == "audio" { audio.append(track) }
         }
+
+        subtitleTracks = subs
+        audioTracks = audio
+        if let first = audio.first { currentAudioTrackId = first.id }
     }
 
     private func formatTime(_ seconds: Double) -> String {
@@ -236,9 +314,7 @@ final class PlayerViewModel: ObservableObject {
         let h = total / 3600
         let m = (total % 3600) / 60
         let s = total % 60
-        if h > 0 {
-            return String(format: "%d:%02d:%02d", h, m, s)
-        }
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
         return String(format: "%d:%02d", m, s)
     }
 }
@@ -272,18 +348,15 @@ extension PlayerViewModel: MPVPlayerDelegate {
             if let v = value as? Double { volume = v }
         case "paused-for-cache":
             if let v = value as? Bool { isBuffering = v }
+        case "speed":
+            if let v = value as? Double { playbackSpeed = v }
         default:
             break
         }
     }
 
-    func mpvFileLoaded() {
-        onFileLoaded()
-    }
-
-    func mpvEndFile(reason: Int32) {
-        onEndFile(reason: reason)
-    }
+    func mpvFileLoaded() { onFileLoaded() }
+    func mpvEndFile(reason: Int32) { onEndFile(reason: reason) }
 }
 
 // MARK: - Array safe subscript

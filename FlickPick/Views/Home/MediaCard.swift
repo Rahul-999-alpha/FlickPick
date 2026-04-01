@@ -1,11 +1,18 @@
 import SwiftUI
 
-/// Thumbnail card with progress bar, title, and watched state.
+/// Thumbnail card with progress bar, title, hover state, and watched indicator.
 struct MediaCard: View {
     let file: MediaFileRecord
     let watchProgress: Double  // 0...1
     let isCompleted: Bool
     var onTap: () -> Void = {}
+
+    @State private var isHovering = false
+    @State private var cachedImage: NSImage?
+
+    private var clampedProgress: Double {
+        min(max(watchProgress, 0), 1)
+    }
 
     var body: some View {
         Button(action: onTap) {
@@ -13,17 +20,17 @@ struct MediaCard: View {
                 // Thumbnail
                 ZStack(alignment: .bottomLeading) {
                     thumbnailView
-                        .frame(width: 220, height: 124)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .frame(width: FP.cardWidth, height: FP.cardHeight)
+                        .clipShape(RoundedRectangle(cornerRadius: FP.cardRadius))
 
                     // Progress bar
-                    if watchProgress > 0 && !isCompleted {
+                    if clampedProgress > 0 && !isCompleted {
                         GeometryReader { geo in
                             VStack {
                                 Spacer()
-                                Rectangle()
-                                    .fill(Color.accentColor)
-                                    .frame(width: geo.size.width * watchProgress, height: 3)
+                                RoundedRectangle(cornerRadius: 1.5)
+                                    .fill(FP.accent)
+                                    .frame(width: geo.size.width * clampedProgress, height: 3)
                             }
                         }
                     }
@@ -33,48 +40,61 @@ struct MediaCard: View {
                         HStack {
                             Spacer()
                             Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(Color.green)
+                                .foregroundStyle(FP.watched)
                                 .font(.title3)
                                 .padding(6)
                         }
                         .frame(maxHeight: .infinity, alignment: .topTrailing)
                     }
                 }
+                .overlay(
+                    RoundedRectangle(cornerRadius: FP.cardRadius)
+                        .strokeBorder(isHovering ? FP.border : .clear, lineWidth: 1)
+                )
 
                 // Title
                 Text(file.baseName ?? file.filename)
-                    .font(.caption)
-                    .foregroundStyle(.primary)
+                    .font(FP.captionFont)
+                    .foregroundStyle(FP.textPrimary)
                     .lineLimit(1)
 
                 // Metadata
                 if let duration = file.durationSeconds {
                     Text(formatDuration(duration))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(FP.textSecondary)
                 }
             }
-            .frame(width: 220)
+            .frame(width: FP.cardWidth)
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .scaleEffect(isHovering ? 1.03 : 1.0)
+        .animation(.easeOut(duration: 0.15), value: isHovering)
+        .task { loadImage() }
     }
 
     @ViewBuilder
     private var thumbnailView: some View {
-        if let thumbPath = file.thumbnailPath,
-           let image = NSImage(contentsOfFile: thumbPath) {
+        if let image = cachedImage {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
         } else {
-            Rectangle()
-                .fill(Color(white: 0.12))
+            RoundedRectangle(cornerRadius: FP.cardRadius)
+                .fill(FP.surface)
                 .overlay {
                     Image(systemName: "film")
                         .font(.largeTitle)
-                        .foregroundStyle(.quaternary)
+                        .foregroundStyle(FP.textSecondary.opacity(0.3))
                 }
         }
+    }
+
+    private func loadImage() {
+        guard cachedImage == nil,
+              let thumbPath = file.thumbnailPath else { return }
+        cachedImage = NSImage(contentsOfFile: thumbPath)
     }
 
     private func formatDuration(_ seconds: Double) -> String {

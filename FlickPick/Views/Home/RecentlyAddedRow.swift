@@ -7,13 +7,14 @@ struct RecentlyAddedRow: View {
 
     var body: some View {
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text("Recently Added")
-                    .font(.title2.weight(.semibold))
-                    .padding(.horizontal, 24)
+                    .font(FP.sectionFont)
+                    .foregroundStyle(FP.textPrimary)
+                    .padding(.horizontal, FP.sectionPadding)
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 16) {
+                    LazyHStack(spacing: FP.cardSpacing) {
                         ForEach(items, id: \.path) { file in
                             ZStack(alignment: .topLeading) {
                                 MediaCard(
@@ -25,16 +26,16 @@ struct RecentlyAddedRow: View {
 
                                 // "NEW" badge
                                 Text("NEW")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(FP.badgeFont)
                                     .foregroundStyle(.black)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
-                                    .background(Color.orange, in: RoundedRectangle(cornerRadius: 4))
-                                    .padding(6)
+                                    .background(FP.newBadge, in: RoundedRectangle(cornerRadius: 4))
+                                    .padding(8)
                             }
                         }
                     }
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, FP.sectionPadding)
                 }
             }
         }

@@ -10,13 +10,14 @@ struct HomeView: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 28) {
                 // Header
-                HStack {
-                    VStack(alignment: .leading) {
+                HStack(alignment: .bottom) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("FlickPick")
-                            .font(.largeTitle.weight(.bold))
+                            .font(FP.titleFont)
+                            .foregroundStyle(FP.textPrimary)
                         Text("Your Library")
-                            .font(.title3)
-                            .foregroundStyle(.secondary)
+                            .font(FP.bodyFont)
+                            .foregroundStyle(FP.textSecondary)
                     }
                     Spacer()
 
@@ -26,8 +27,8 @@ struct HomeView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
+                .padding(.horizontal, FP.sectionPadding)
+                .padding(.top, 20)
 
                 // Continue Watching
                 ContinueWatchingRow(
@@ -61,22 +62,22 @@ struct HomeView: View {
                 Spacer(minLength: 40)
             }
         }
-        .background(Color(white: 0.04))
+        .background(FP.background)
     }
 
     private var emptyState: some View {
         VStack(spacing: 16) {
             Image(systemName: "film.stack")
                 .font(.system(size: 48))
-                .foregroundStyle(.quaternary)
+                .foregroundStyle(FP.textSecondary.opacity(0.3))
 
             Text("No media yet")
-                .font(.title2)
-                .foregroundStyle(.secondary)
+                .font(FP.subtitleFont)
+                .foregroundStyle(FP.textSecondary)
 
             Text("Add a folder in Settings or drag a video file to get started.")
-                .font(.body)
-                .foregroundStyle(.tertiary)
+                .font(FP.bodyFont)
+                .foregroundStyle(FP.textSecondary.opacity(0.6))
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)

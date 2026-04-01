@@ -6,87 +6,93 @@ struct SettingsView: View {
     @ObservedObject var library: LibraryManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("Settings")
-                .font(.largeTitle.weight(.bold))
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Settings")
+                    .font(FP.titleFont)
+                    .foregroundStyle(FP.textPrimary)
+                    .padding(.horizontal, FP.sectionPadding)
+                    .padding(.top, 20)
 
-            // Watched Folders
-            GroupBox {
+                // Watched Folders
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Watched Folders")
-                            .font(.headline)
+                            .font(FP.subtitleFont)
+                            .foregroundStyle(FP.textPrimary)
                         Spacer()
                         Button(action: viewModel.addFolder) {
                             Label("Add Folder", systemImage: "plus")
                         }
+                        .buttonStyle(.borderedProminent)
+                        .tint(FP.accent)
+                        .controlSize(.small)
                     }
 
                     if viewModel.watchedFolders.isEmpty {
                         Text("No folders added yet. Add a folder to start scanning for media.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 8)
+                            .font(FP.bodyFont)
+                            .foregroundStyle(FP.textSecondary)
+                            .padding(.vertical, 12)
                     } else {
                         ForEach(viewModel.watchedFolders, id: \.path) { folder in
                             HStack {
                                 Image(systemName: "folder.fill")
-                                    .foregroundStyle(.secondary)
-                                VStack(alignment: .leading) {
+                                    .foregroundStyle(FP.textSecondary)
+                                VStack(alignment: .leading, spacing: 2) {
                                     Text(folder.path)
-                                        .font(.system(.body, design: .monospaced))
+                                        .font(.system(size: 13, design: .monospaced))
+                                        .foregroundStyle(FP.textPrimary)
                                         .lineLimit(1)
                                     Text("Last scanned: \(folder.lastScannedAt.formatted())")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(FP.textSecondary)
                                 }
                                 Spacer()
                                 Button(role: .destructive) {
                                     viewModel.removeFolder(folder.path)
                                 } label: {
                                     Image(systemName: "trash")
+                                        .font(.system(size: 13))
                                 }
                                 .buttonStyle(.plain)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(.red.opacity(0.8))
                             }
-                            .padding(.vertical, 4)
-                            Divider()
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 12)
+                            .background(FP.surface, in: RoundedRectangle(cornerRadius: 8))
                         }
                     }
                 }
-                .padding(12)
-            }
-            .padding(.horizontal, 24)
+                .padding(.horizontal, FP.sectionPadding)
 
-            // Actions
-            GroupBox {
+                // Actions
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Library")
-                        .font(.headline)
+                        .font(FP.subtitleFont)
+                        .foregroundStyle(FP.textPrimary)
 
-                    HStack {
+                    HStack(spacing: 12) {
                         Button("Rescan All Folders") {
                             viewModel.rescanAll()
                         }
+                        .buttonStyle(.bordered)
 
                         if library.isScanning {
                             ProgressView()
                                 .scaleEffect(0.7)
                             Text("Scanning...")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(FP.captionFont)
+                                .foregroundStyle(FP.textSecondary)
                         }
                     }
                 }
-                .padding(12)
-            }
-            .padding(.horizontal, 24)
+                .padding(.horizontal, FP.sectionPadding)
 
-            Spacer()
+                Spacer()
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(white: 0.04))
+        .background(FP.background)
     }
 }
