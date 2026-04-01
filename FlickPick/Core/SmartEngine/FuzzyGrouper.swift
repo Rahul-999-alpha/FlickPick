@@ -10,8 +10,9 @@ enum FuzzyGrouper {
 
     /// Group sibling files by shared prefix. Files sharing >50% of their name
     /// length are considered part of the same group.
+    /// Capped at 500 files to prevent O(n^2) freeze on large folders.
     static func group(_ urls: [URL]) -> [FileGroup] {
-        guard urls.count > 1 else { return [] }
+        guard urls.count > 1, urls.count < 500 else { return [] }
 
         let tokenized = urls.map { (url: $0, name: FilenameTokenizer.tokenize($0.lastPathComponent)) }
         var assigned = Set<URL>()

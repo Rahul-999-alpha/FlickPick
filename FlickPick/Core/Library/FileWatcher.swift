@@ -2,6 +2,7 @@ import Foundation
 import CoreServices
 
 /// FSEvents-based file watcher for library folders.
+/// Uses passRetained to prevent use-after-free in the callback.
 final class FileWatcher {
     private var stream: FSEventStreamRef?
     private var watchedPaths: [String] = []
@@ -12,9 +13,11 @@ final class FileWatcher {
         watchedPaths = paths
         guard !paths.isEmpty else { return }
 
+        // Use passRetained so the callback has a valid reference.
+        // Balanced by takeRetainedValue in stop().
         var context = FSEventStreamContext(
             version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
+            info: Unmanaged.passRetained(self).toOpaque(),
             retain: nil,
             release: nil,
             copyDescription: nil
@@ -52,11 +55,27 @@ final class FileWatcher {
             FSEventStreamStop(stream)
             FSEventStreamInvalidate(stream)
             FSEventStreamRelease(stream)
+            // Balance the passRetained from watch()
+            Unmanaged.passUnretained(self).release()
         }
         stream = nil
     }
 
     deinit {
-        stop()
+        // stop() must be called on the main thread where the stream was scheduled
+        if stream != nil {
+            if Thread.isMainThread {
+                stop()
+            } else {
+                let s = stream!
+                stream = nil
+                DispatchQueue.main.sync {
+                    FSEventStreamStop(s)
+                    FSEventStreamInvalidate(s)
+                    FSEventStreamRelease(s)
+                }
+                Unmanaged.passUnretained(self).release()
+            }
+        }
     }
 }

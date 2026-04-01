@@ -1,5 +1,7 @@
 import Foundation
 import Combine
+import AppKit
+import Libmpv
 
 /// Bridges MPVPlayer events into SwiftUI-friendly @Published state.
 @MainActor
@@ -25,15 +27,33 @@ final class PlayerViewModel: ObservableObject {
 
     // MARK: - Player reference
 
-    var player: MPVPlayer?
+    weak var player: MPVPlayer?
     var pendingFile: URL?
 
     // MARK: - Private
 
-    private var controlsTimer: Timer?
+    private var controlsHideTask: Task<Void, Never>?
     private var previousVolume: Double = 100
     private let resumeManager = ResumeManager()
     private let watchHistory = WatchHistory()
+    private var terminationObserver: Any?
+
+    init() {
+        // Save position on app quit
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.resumeManager.finalSaveAndStop()
+        }
+    }
+
+    deinit {
+        if let observer = terminationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        controlsHideTask?.cancel()
+    }
 
     // MARK: - Smart open (with playlist building)
 
@@ -87,21 +107,23 @@ final class PlayerViewModel: ObservableObject {
         let clamped = min(max(vol, 0), 100)
         volume = clamped
         player?.setVolume(clamped)
-        if clamped > 0 { isMuted = false }
     }
 
     func toggleMute() {
         if isMuted {
-            setVolume(previousVolume)
+            volume = previousVolume
+            player?.setVolume(previousVolume)
+            isMuted = false
         } else {
             previousVolume = volume
-            setVolume(0)
+            volume = 0
+            player?.setVolume(0)
+            isMuted = true
         }
-        isMuted.toggle()
     }
 
     func stop() {
-        resumeManager.stopTracking()
+        resumeManager.finalSaveAndStop()
         player?.stop()
         isPlaying = false
         isFileLoaded = false
@@ -136,12 +158,11 @@ final class PlayerViewModel: ObservableObject {
 
     func resetControlsTimer() {
         showControls = true
-        controlsTimer?.invalidate()
+        controlsHideTask?.cancel()
         guard isFullscreen else { return }
-        controlsTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.showControls = false
-            }
+        controlsHideTask = Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            if !Task.isCancelled { showControls = false }
         }
     }
 
@@ -170,11 +191,11 @@ final class PlayerViewModel: ObservableObject {
     }
 
     private func onFileLoaded() {
+        guard let url = playlist[safe: currentIndex] else { return }
+
         isPlaying = true
         isFileLoaded = true
         eofReached = false
-
-        let url = playlist[currentIndex]
 
         // Resume from saved position
         let savedPos = resumeManager.getResumePosition(path: url.path)
@@ -190,16 +211,20 @@ final class PlayerViewModel: ObservableObject {
         // Index the file if not already
         let analysis = PatternMatcher.analyze(url.lastPathComponent)
         let record = MediaFileRecord.from(url: url, analysis: analysis)
-        try? MediaFileRepository().upsert(record)
+        do { try MediaFileRepository().upsert(record) }
+        catch { print("[FlickPick] Index failed: \(error)") }
     }
 
-    private func onEndFile() {
-        resumeManager.stopTracking()
+    private func onEndFile(reason: Int32) {
+        resumeManager.finalSaveAndStop()
 
-        let url = playlist[currentIndex]
+        guard let url = playlist[safe: currentIndex] else { return }
+
+        // Only mark completed and auto-advance on natural EOF
+        guard reason == MPV_END_FILE_REASON_EOF.rawValue else { return }
+
         watchHistory.markCompleted(path: url.path)
 
-        // Auto-advance
         if hasNext {
             playNext()
         }
@@ -226,7 +251,6 @@ extension PlayerViewModel: MPVPlayerDelegate {
         case "time-pos":
             if let v = value as? Double {
                 currentTime = v
-                // Check for completion (>90%)
                 if duration > 0, let url = playlist[safe: currentIndex] {
                     resumeManager.checkAndMarkCompleted(path: url.path, position: v, duration: duration)
                 }
@@ -234,7 +258,6 @@ extension PlayerViewModel: MPVPlayerDelegate {
         case "duration":
             if let v = value as? Double {
                 duration = v
-                // Update duration in DB
                 if let url = playlist[safe: currentIndex],
                    let file = try? MediaFileRepository().fetchByPath(url.path),
                    let fileId = file.id {
@@ -258,8 +281,8 @@ extension PlayerViewModel: MPVPlayerDelegate {
         onFileLoaded()
     }
 
-    func mpvEndFile() {
-        onEndFile()
+    func mpvEndFile(reason: Int32) {
+        onEndFile(reason: reason)
     }
 }
 

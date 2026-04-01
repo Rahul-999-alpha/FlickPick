@@ -8,6 +8,7 @@ final class MPVPlayer: NSViewController {
     private(set) var mpv: OpaquePointer!
     private var metalLayer = MetalLayer()
     private lazy var eventQueue = DispatchQueue(label: "com.flickpick.mpv", qos: .userInitiated)
+    private let mpvLock = NSLock()
 
     weak var delegate: MPVPlayerDelegate?
     var fileToLoad: URL?
@@ -15,14 +16,16 @@ final class MPVPlayer: NSViewController {
     // MARK: - View lifecycle
 
     override func loadView() {
-        self.view = NSView(frame: .init(x: 0, y: 0, width: 960, height: 540))
+        let v = NSView(frame: .init(x: 0, y: 0, width: 960, height: 540))
+        v.autoresizingMask = [.width, .height]
+        self.view = v
         self.view.wantsLayer = true
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        metalLayer.frame = view.frame
+        metalLayer.frame = view.bounds
         metalLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
         metalLayer.framebufferOnly = true
         metalLayer.backgroundColor = NSColor.black.cgColor
@@ -41,8 +44,20 @@ final class MPVPlayer: NSViewController {
         guard let window = view.window else { return }
         let scale = window.screen?.backingScaleFactor ?? 2.0
         let size = view.bounds.size
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         metalLayer.frame = CGRect(origin: .zero, size: size)
         metalLayer.drawableSize = CGSize(width: size.width * scale, height: size.height * scale)
+
+        // Also update any sublayers mpv may have created
+        view.layer?.sublayers?.forEach { sublayer in
+            sublayer.frame = CGRect(origin: .zero, size: size)
+            if let metal = sublayer as? CAMetalLayer {
+                metal.drawableSize = CGSize(width: size.width * scale, height: size.height * scale)
+            }
+        }
+        CATransaction.commit()
     }
 
     // MARK: - mpv setup
@@ -64,8 +79,9 @@ final class MPVPlayer: NSViewController {
         check(mpv_set_option_string(mpv, "input-media-keys", "yes"))
         #endif
 
-        // Render into our Metal layer
-        check(mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &metalLayer))
+        // Render into our Metal layer — pass the view pointer as wid
+        var wid = Int64(Int(bitPattern: Unmanaged.passUnretained(self.view).toOpaque()))
+        check(mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &wid))
         check(mpv_set_option_string(mpv, "vo", "gpu-next"))
         check(mpv_set_option_string(mpv, "gpu-api", "vulkan"))
         check(mpv_set_option_string(mpv, "gpu-context", "moltenvk"))
@@ -90,17 +106,18 @@ final class MPVPlayer: NSViewController {
         mpv_observe_property(mpv, 0, "paused-for-cache", MPV_FORMAT_FLAG)
 
         // Wakeup callback -> drain events on our serial queue
+        // Use passUnretained — the view hierarchy owns our lifecycle
         mpv_set_wakeup_callback(mpv, { ctx in
             guard let ctx else { return }
             let player = Unmanaged<MPVPlayer>.fromOpaque(ctx).takeUnretainedValue()
             player.drainEvents()
-        }, Unmanaged.passRetained(self).toOpaque())
+        }, Unmanaged.passUnretained(self).toOpaque())
     }
 
     // MARK: - Playback controls
 
     func loadFile(_ url: URL) {
-        command("loadfile", args: [url.absoluteString, "replace"])
+        command("loadfile", args: [url.path, "replace"])
     }
 
     func play() {
@@ -132,9 +149,11 @@ final class MPVPlayer: NSViewController {
         command("stop")
     }
 
-    // MARK: - Property access
+    // MARK: - Property access (thread-safe via lock)
 
     func getDouble(_ name: String) -> Double {
+        mpvLock.lock()
+        defer { mpvLock.unlock() }
         guard mpv != nil else { return 0 }
         var data = Double()
         mpv_get_property(mpv, name, MPV_FORMAT_DOUBLE, &data)
@@ -142,6 +161,8 @@ final class MPVPlayer: NSViewController {
     }
 
     func getFlag(_ name: String) -> Bool {
+        mpvLock.lock()
+        defer { mpvLock.unlock() }
         guard mpv != nil else { return false }
         var data: Int32 = 0
         mpv_get_property(mpv, name, MPV_FORMAT_FLAG, &data)
@@ -149,12 +170,16 @@ final class MPVPlayer: NSViewController {
     }
 
     func setFlag(_ name: String, _ flag: Bool) {
+        mpvLock.lock()
+        defer { mpvLock.unlock() }
         guard mpv != nil else { return }
-        var data: Int = flag ? 1 : 0
+        var data: Int32 = flag ? 1 : 0
         mpv_set_property(mpv, name, MPV_FORMAT_FLAG, &data)
     }
 
     func setDouble(_ name: String, _ value: Double) {
+        mpvLock.lock()
+        defer { mpvLock.unlock() }
         guard mpv != nil else { return }
         var data = value
         mpv_set_property(mpv, name, MPV_FORMAT_DOUBLE, &data)
@@ -163,11 +188,16 @@ final class MPVPlayer: NSViewController {
     // MARK: - Command execution
 
     func command(_ command: String, args: [String] = []) {
+        mpvLock.lock()
+        defer { mpvLock.unlock() }
         guard mpv != nil else { return }
-        var cargs: [String?] = [command] + args + [nil]
-        var cptrs = cargs.map { $0.flatMap { UnsafePointer<CChar>(strdup($0)) } }
-        defer { cptrs.forEach { if let p = $0 { free(UnsafeMutablePointer(mutating: p)) } } }
-        let result = mpv_command(mpv, &cptrs)
+        let allArgs = [command] + args
+        var cptrs: [UnsafeMutablePointer<CChar>?] = allArgs.map { strdup($0) }
+        cptrs.append(nil)
+        defer { cptrs.forEach { free($0) } }
+        // mpv_command expects UnsafeMutablePointer<UnsafePointer<CChar>?>
+        var constPtrs = cptrs.map { $0.map { UnsafePointer($0) } }
+        let result = mpv_command(mpv, &constPtrs)
         check(result)
     }
 
@@ -175,9 +205,17 @@ final class MPVPlayer: NSViewController {
 
     private func drainEvents() {
         eventQueue.async { [weak self] in
-            guard let self, self.mpv != nil else { return }
+            guard let self else { return }
+            self.mpvLock.lock()
+            guard self.mpv != nil else { self.mpvLock.unlock(); return }
+            self.mpvLock.unlock()
+
             while true {
+                self.mpvLock.lock()
+                guard self.mpv != nil else { self.mpvLock.unlock(); return }
                 let event = mpv_wait_event(self.mpv, 0)
+                self.mpvLock.unlock()
+
                 guard let event, event.pointee.event_id != MPV_EVENT_NONE else { break }
 
                 switch event.pointee.event_id {
@@ -185,26 +223,39 @@ final class MPVPlayer: NSViewController {
                     self.handlePropertyChange(event.pointee)
 
                 case MPV_EVENT_END_FILE:
-                    DispatchQueue.main.async {
-                        self.delegate?.mpvEndFile()
+                    // Check the reason — only report natural EOF
+                    var reason: Int32 = -1
+                    if let data = event.pointee.data {
+                        let endFile = UnsafePointer<mpv_event_end_file>(OpaquePointer(data)).pointee
+                        reason = Int32(endFile.reason.rawValue)
+                    }
+                    DispatchQueue.main.async { [weak self] in
+                        self?.delegate?.mpvEndFile(reason: reason)
                     }
 
                 case MPV_EVENT_FILE_LOADED:
-                    DispatchQueue.main.async {
-                        self.delegate?.mpvFileLoaded()
+                    DispatchQueue.main.async { [weak self] in
+                        self?.delegate?.mpvFileLoaded()
                     }
 
                 case MPV_EVENT_SHUTDOWN:
                     print("[FlickPick] mpv shutdown")
-                    mpv_terminate_destroy(self.mpv)
+                    self.mpvLock.lock()
+                    let handle = self.mpv
                     self.mpv = nil
+                    self.mpvLock.unlock()
+                    if let handle {
+                        mpv_terminate_destroy(handle)
+                    }
                     return
 
                 case MPV_EVENT_LOG_MESSAGE:
                     if let msg = UnsafeMutablePointer<mpv_event_log_message>(OpaquePointer(event.pointee.data)) {
-                        let prefix = String(cString: msg.pointee.prefix!)
-                        let text = String(cString: msg.pointee.text!)
-                        print("[mpv/\(prefix)] \(text)", terminator: "")
+                        if let prefix = msg.pointee.prefix, let text = msg.pointee.text {
+                            let prefixStr = String(cString: prefix)
+                            let textStr = String(cString: text)
+                            print("[mpv/\(prefixStr)] \(textStr)", terminator: "")
+                        }
                     }
 
                 default:
@@ -222,27 +273,27 @@ final class MPVPlayer: NSViewController {
         switch name {
         case "time-pos":
             if let value = UnsafePointer<Double>(OpaquePointer(property.data))?.pointee {
-                DispatchQueue.main.async { self.delegate?.mpvPropertyChanged(name, value: value) }
+                DispatchQueue.main.async { [weak self] in self?.delegate?.mpvPropertyChanged(name, value: value) }
             }
         case "duration":
             if let value = UnsafePointer<Double>(OpaquePointer(property.data))?.pointee {
-                DispatchQueue.main.async { self.delegate?.mpvPropertyChanged(name, value: value) }
+                DispatchQueue.main.async { [weak self] in self?.delegate?.mpvPropertyChanged(name, value: value) }
             }
         case "pause":
             if let value = UnsafePointer<Int32>(OpaquePointer(property.data))?.pointee {
-                DispatchQueue.main.async { self.delegate?.mpvPropertyChanged(name, value: value != 0) }
+                DispatchQueue.main.async { [weak self] in self?.delegate?.mpvPropertyChanged(name, value: value != 0) }
             }
         case "eof-reached":
             if let value = UnsafePointer<Int32>(OpaquePointer(property.data))?.pointee {
-                DispatchQueue.main.async { self.delegate?.mpvPropertyChanged(name, value: value != 0) }
+                DispatchQueue.main.async { [weak self] in self?.delegate?.mpvPropertyChanged(name, value: value != 0) }
             }
         case "volume":
             if let value = UnsafePointer<Double>(OpaquePointer(property.data))?.pointee {
-                DispatchQueue.main.async { self.delegate?.mpvPropertyChanged(name, value: value) }
+                DispatchQueue.main.async { [weak self] in self?.delegate?.mpvPropertyChanged(name, value: value) }
             }
         case "paused-for-cache":
             if let value = UnsafePointer<Int32>(OpaquePointer(property.data))?.pointee {
-                DispatchQueue.main.async { self.delegate?.mpvPropertyChanged(name, value: value != 0) }
+                DispatchQueue.main.async { [weak self] in self?.delegate?.mpvPropertyChanged(name, value: value != 0) }
             }
         default:
             break
@@ -252,15 +303,16 @@ final class MPVPlayer: NSViewController {
     // MARK: - Cleanup
 
     deinit {
-        if mpv != nil {
-            mpv_set_wakeup_callback(mpv, nil, nil)
-            eventQueue.sync {
-                if self.mpv != nil {
-                    mpv_terminate_destroy(self.mpv)
-                    self.mpv = nil
-                }
+        mpvLock.lock()
+        let handle = mpv
+        mpv = nil
+        mpvLock.unlock()
+
+        if let handle {
+            mpv_set_wakeup_callback(handle, nil, nil)
+            eventQueue.async {
+                mpv_terminate_destroy(handle)
             }
-            Unmanaged.passUnretained(self).release()
         }
     }
 

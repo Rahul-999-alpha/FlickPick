@@ -3,16 +3,21 @@ import Foundation
 /// Walks a folder tree and finds all video files.
 enum FolderScanner {
 
-    /// Recursively scan a folder for video files.
+    /// Recursively scan a folder for video files. Skips symlinks.
     static func scan(_ folder: URL) -> [URL] {
         guard let enumerator = FileManager.default.enumerator(
             at: folder,
-            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .creationDateKey],
-            options: [.skipsHiddenFiles]
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .creationDateKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return [] }
 
         var videos: [URL] = []
         for case let url as URL in enumerator {
+            // Skip symlinks
+            let resourceValues = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard resourceValues?.isRegularFile == true,
+                  resourceValues?.isSymbolicLink != true else { continue }
+
             if FilenameTokenizer.isVideoFile(url.path) {
                 videos.append(url)
             }
@@ -54,8 +59,9 @@ enum FolderScanner {
 
                 guard let collectionId = collection.id else { continue }
                 for (url, _) in group {
-                    if let file = try mediaRepo.fetchByPath(url.path) {
-                        try mediaRepo.setCollection(fileId: file.id!, collectionId: collectionId)
+                    if let file = try mediaRepo.fetchByPath(url.path),
+                       let fileId = file.id {
+                        try mediaRepo.setCollection(fileId: fileId, collectionId: collectionId)
                     }
                 }
                 try collectionRepo.updateCounts(id: collectionId)

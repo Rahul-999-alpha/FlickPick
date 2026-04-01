@@ -1,10 +1,12 @@
 import SwiftUI
+import GRDB
 
-/// Cmd+K fuzzy search overlay.
+/// Cmd+K fuzzy search overlay with debounce.
 struct CommandPalette: View {
     @Binding var isPresented: Bool
     @State private var query = ""
     @State private var results: [MediaFileRecord] = []
+    @State private var searchTask: Task<Void, Never>?
 
     var onSelect: (MediaFileRecord) -> Void
 
@@ -83,7 +85,13 @@ struct CommandPalette: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .shadow(radius: 20)
         .onChange(of: query) { _, newValue in
-            search(newValue)
+            // Debounce: cancel previous search, wait 200ms
+            searchTask?.cancel()
+            searchTask = Task {
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled else { return }
+                search(newValue)
+            }
         }
         .onKeyPress(.escape) {
             isPresented = false
@@ -97,11 +105,14 @@ struct CommandPalette: View {
             return
         }
         do {
-            let all = try mediaRepo.fetchAll()
-            let lowered = term.lowercased()
-            results = all.filter { file in
-                let name = (file.baseName ?? file.filename).lowercased()
-                return name.contains(lowered)
+            let pattern = "%\(term)%"
+            results = try mediaRepo.db.read { db in
+                let sql = """
+                    SELECT * FROM media_files
+                    WHERE baseName LIKE ? OR filename LIKE ?
+                    LIMIT 20
+                """
+                return try MediaFileRecord.fetchAll(db, sql: sql, arguments: [pattern, pattern])
             }
         } catch {
             results = []

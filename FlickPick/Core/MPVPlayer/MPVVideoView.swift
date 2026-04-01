@@ -13,6 +13,7 @@ struct MPVVideoView: NSViewControllerRepresentable {
     }
 
     func updateNSViewController(_ nsViewController: MPVPlayer, context: Context) {
-        // Updates handled via ViewModel -> player direct calls
+        // Trigger layout update when SwiftUI changes the view size
+        nsViewController.view.needsLayout = true
     }
 }

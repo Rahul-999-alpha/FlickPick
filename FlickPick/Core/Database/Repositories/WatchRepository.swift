@@ -89,20 +89,21 @@ struct WatchRepository {
     }
 
     /// Items currently in progress (position > 0, not completed), ordered by most recent.
+    /// Uses aliased columns to avoid id collision between joined tables.
     func fetchContinueWatching(limit: Int = 20) throws -> [(MediaFileRecord, WatchRecord)] {
         try db.read { db in
-            let sql = """
-                SELECT mf.*, wh.*
-                FROM media_files mf
-                INNER JOIN watch_history wh ON wh.mediaFileId = mf.id
-                WHERE wh.completed = 0 AND wh.positionSeconds > 0
-                ORDER BY wh.lastWatchedAt DESC
-                LIMIT ?
-            """
-            let rows = try Row.fetchAll(db, sql: sql, arguments: [limit])
-            return try rows.map { row in
-                let mf = try MediaFileRecord(row: row)
-                let wh = try WatchRecord(row: row)
+            // Fetch separately to avoid column name collision from JOIN
+            let watchRecords = try WatchRecord
+                .filter(WatchRecord.Columns.completed == false)
+                .filter(WatchRecord.Columns.positionSeconds > 0)
+                .order(WatchRecord.Columns.lastWatchedAt.desc)
+                .limit(limit)
+                .fetchAll(db)
+
+            return try watchRecords.compactMap { wh in
+                guard let mf = try MediaFileRecord.fetchOne(db, id: wh.mediaFileId) else {
+                    return nil
+                }
                 return (mf, wh)
             }
         }

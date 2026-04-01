@@ -8,34 +8,54 @@ final class AppDatabase {
     let writer: DatabaseWriter
 
     private init() {
-        do {
-            let folder = AppDatabase.databaseFolder()
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let dbURL = folder.appendingPathComponent("flickpick.sqlite")
-            var config = Configuration()
-            config.prepareDatabase { db in
-                db.trace { print("[SQL] \($0)") }
-            }
-            #if DEBUG
-            // Verbose logging in debug
-            #endif
-            let pool = try DatabasePool(path: dbURL.path, configuration: config)
-            writer = pool
-            try migrator.migrate(pool)
-        } catch {
-            fatalError("[FlickPick] Database setup failed: \(error)")
-        }
+        writer = AppDatabase.createWriter()
     }
+
+    private static func createWriter() -> DatabaseWriter {
+        let folder = databaseFolder()
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let dbURL = folder.appendingPathComponent("flickpick.sqlite")
+
+        // First attempt
+        if let pool = try? openPool(at: dbURL) {
+            return pool
+        }
+
+        // Recovery: delete corrupted DB and retry
+        print("[FlickPick] Database corrupted, recreating...")
+        try? FileManager.default.removeItem(at: dbURL)
+        if let pool = try? openPool(at: dbURL) {
+            return pool
+        }
+
+        fatalError("[FlickPick] Database setup failed even after recovery")
+    }
+
+    private static func openPool(at url: URL) throws -> DatabasePool {
+        var config = Configuration()
+        #if DEBUG
+        config.prepareDatabase { db in
+            db.trace { print("[SQL] \($0)") }
+        }
+        #endif
+        let pool = try DatabasePool(path: url.path, configuration: config)
+        try AppDatabase.shared_migrator.migrate(pool)
+        return pool
+    }
+
+    // Migrator as a static to allow use before init completes
+    private static let shared_migrator = makeMigrator()
 
     // MARK: - Migrations
 
-    private var migrator: DatabaseMigrator {
+    private static func makeMigrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
         #if DEBUG
         migrator.eraseDatabaseOnSchemaChange = true
         #endif
 
+        // IMPORTANT: Never modify this block after shipping. Add new migrations below.
         migrator.registerMigration("v1") { db in
             try db.create(table: "collections") { t in
                 t.autoIncrementedPrimaryKey("id")
@@ -93,7 +113,10 @@ final class AppDatabase {
     // MARK: - Database location
 
     private static func databaseFolder() -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            // Fallback to temp directory
+            return FileManager.default.temporaryDirectory.appendingPathComponent("FlickPick", isDirectory: true)
+        }
         return appSupport.appendingPathComponent("FlickPick", isDirectory: true)
     }
 }

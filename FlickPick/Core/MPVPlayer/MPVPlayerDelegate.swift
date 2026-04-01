@@ -5,5 +5,5 @@ import Foundation
 protocol MPVPlayerDelegate: AnyObject {
     func mpvPropertyChanged(_ name: String, value: Any)
     func mpvFileLoaded()
-    func mpvEndFile()
+    func mpvEndFile(reason: Int32)
 }

@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @ObservedObject var playerVM: PlayerViewModel
     @StateObject private var libraryVM = LibraryViewModel()
-    @StateObject private var library = LibraryManager.shared
+    @ObservedObject private var library = LibraryManager.shared
 
     @State private var currentScreen: Screen = .home
     @State private var selectedCollection: CollectionRecord?
@@ -39,6 +39,8 @@ struct ContentView: View {
             guard let provider = providers.first else { return false }
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url else { return }
+                // Validate it's a video file before opening
+                guard FilenameTokenizer.isVideoFile(url.path) else { return }
                 Task { @MainActor in
                     playerVM.openFile(url)
                     currentScreen = .player
@@ -80,7 +82,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var mainContent: some View {
-        if !hasCompletedOnboarding && !library.watchedFolders.isEmpty == false {
+        if !hasCompletedOnboarding {
             OnboardingView(
                 onFolderSelected: { path in
                     library.addFolder(path)
@@ -120,6 +122,8 @@ struct ContentView: View {
                         },
                         onBack: { currentScreen = .home }
                     )
+                } else {
+                    Color.clear.onAppear { currentScreen = .home }
                 }
 
             case .settings:
@@ -135,8 +139,10 @@ struct ContentView: View {
         panel.allowedContentTypes = [.mpeg4Movie, .movie, .quickTimeMovie, .avi]
         panel.begin { response in
             if response == .OK, let url = panel.url {
-                playerVM.openFile(url)
-                currentScreen = .player
+                Task { @MainActor in
+                    playerVM.openFile(url)
+                    currentScreen = .player
+                }
             }
         }
     }

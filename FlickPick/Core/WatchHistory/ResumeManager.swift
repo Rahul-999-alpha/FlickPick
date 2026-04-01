@@ -1,33 +1,37 @@
 import Foundation
 
-/// Manages resume positions — save every 5s, restore on open.
+/// Manages resume positions — save every 5s, restore on open, final save on stop.
 @MainActor
 final class ResumeManager {
     private let watchRepo = WatchRepository()
     private let mediaRepo = MediaFileRepository()
     private var saveTimer: Timer?
     private var currentMediaId: Int64?
+    private var getCurrentTime: (() -> Double)?
 
     /// Start tracking position for a file.
     func startTracking(path: String, getCurrentTime: @escaping () -> Double) {
-        stopTracking()
+        finalSaveAndStop()
 
         guard let file = try? mediaRepo.fetchByPath(path) else { return }
         currentMediaId = file.id
+        self.getCurrentTime = getCurrentTime
 
         // Save position every 5 seconds
         saveTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            guard let self, let mediaId = self.currentMediaId else { return }
-            let time = getCurrentTime()
-            guard time > 0 else { return }
-            try? self.watchRepo.savePosition(mediaFileId: mediaId, position: time)
+            Task { @MainActor [weak self] in
+                self?.saveCurrentPosition()
+            }
         }
     }
 
-    func stopTracking() {
+    /// Stop tracking and perform a final save of the current position.
+    func finalSaveAndStop() {
+        saveCurrentPosition()
         saveTimer?.invalidate()
         saveTimer = nil
         currentMediaId = nil
+        getCurrentTime = nil
     }
 
     /// Get the saved resume position for a file.
@@ -45,7 +49,13 @@ final class ResumeManager {
         try? watchRepo.markCompleted(mediaFileId: fileId)
     }
 
-    deinit {
-        saveTimer?.invalidate()
+    // MARK: - Private
+
+    private func saveCurrentPosition() {
+        guard let mediaId = currentMediaId,
+              let getTime = getCurrentTime else { return }
+        let time = getTime()
+        guard time > 0 else { return }
+        try? watchRepo.savePosition(mediaFileId: mediaId, position: time)
     }
 }

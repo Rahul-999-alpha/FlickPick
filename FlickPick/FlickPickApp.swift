@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 @main
 struct FlickPickApp: App {
@@ -25,9 +26,12 @@ struct FlickPickApp: App {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.mpeg4Movie, .movie, .quickTimeMovie, .avi]
         panel.begin { response in
             if response == .OK, let url = panel.url {
-                playerVM.openFile(url)
+                Task { @MainActor in
+                    playerVM.openFile(url)
+                }
             }
         }
     }

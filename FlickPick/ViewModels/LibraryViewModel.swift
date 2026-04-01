@@ -16,6 +16,7 @@ final class LibraryViewModel: ObservableObject {
     private let collectionRepo = CollectionRepository()
     private let watchRepo = WatchRepository()
     private var cancellables = Set<AnyCancellable>()
+    private var watchReloadTask: Task<Void, Never>?
 
     init() {
         startObserving()
@@ -41,7 +42,11 @@ final class LibraryViewModel: ObservableObject {
         }
         .publisher(in: AppDatabase.shared.writer, scheduling: .immediate)
         .sink(
-            receiveCompletion: { _ in },
+            receiveCompletion: { completion in
+                if case .failure(let error) = completion {
+                    print("[FlickPick] DB observation failed: \(error)")
+                }
+            },
             receiveValue: { [weak self] files in
                 self?.recentlyAdded = files
             }
@@ -56,7 +61,11 @@ final class LibraryViewModel: ObservableObject {
         }
         .publisher(in: AppDatabase.shared.writer, scheduling: .immediate)
         .sink(
-            receiveCompletion: { _ in },
+            receiveCompletion: { completion in
+                if case .failure(let error) = completion {
+                    print("[FlickPick] Collection observation failed: \(error)")
+                }
+            },
             receiveValue: { [weak self] cols in
                 self?.collections = cols
             }
@@ -76,11 +85,12 @@ final class LibraryViewModel: ObservableObject {
         )
         .store(in: &cancellables)
 
-        // Observe watch history for continue watching / up next
+        // Observe watch history — debounce to avoid reloading every 5s during playback
         ValueObservation.tracking { db in
             try WatchRecord.fetchCount(db)
         }
         .publisher(in: AppDatabase.shared.writer, scheduling: .immediate)
+        .debounce(for: .seconds(10), scheduler: DispatchQueue.main)
         .sink(
             receiveCompletion: { _ in },
             receiveValue: { [weak self] _ in

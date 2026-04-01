@@ -13,6 +13,7 @@ final class LibraryManager: ObservableObject {
     private let fileWatcher = FileWatcher()
     private let mediaRepo = MediaFileRepository()
     private let watchedFolderDB: DatabaseWriter
+    private var activeScanCount = 0
 
     private init() {
         watchedFolderDB = AppDatabase.shared.writer
@@ -50,10 +51,12 @@ final class LibraryManager: ObservableObject {
                     .deleteAll(db)
             }
 
-            // Remove indexed files from this folder
+            // Remove indexed files — use exact prefix with path separator to avoid matching siblings
+            let pathPrefix = path.hasSuffix("/") ? path : path + "/"
             try watchedFolderDB.write { db in
                 _ = try MediaFileRecord
-                    .filter(MediaFileRecord.Columns.folderPath.like("\(path)%"))
+                    .filter(MediaFileRecord.Columns.folderPath == path ||
+                            MediaFileRecord.Columns.folderPath.like("\(pathPrefix)%"))
                     .deleteAll(db)
             }
 
@@ -69,26 +72,34 @@ final class LibraryManager: ObservableObject {
     func scanAllFolders() async {
         isScanning = true
         for folder in watchedFolders {
-            await scanFolder(folder.path)
+            await scanFolder(folder.path, updateSpinner: false)
         }
         isScanning = false
     }
 
-    func scanFolder(_ path: String) async {
-        isScanning = true
+    func scanFolder(_ path: String, updateSpinner: Bool = true) async {
+        if updateSpinner { isScanning = true }
+        activeScanCount += 1
+
         let url = URL(fileURLWithPath: path)
         let videos = FolderScanner.scan(url)
 
         do {
             try FolderScanner.indexFiles(videos)
 
-            // Generate thumbnails in background
-            for video in videos {
-                Task.detached {
-                    let thumbPath = await ThumbnailGenerator.shared.generate(for: video)
-                    if let thumbPath, let file = try? MediaFileRepository().fetchByPath(video.path) {
-                        try? MediaFileRepository().updateThumbnail(id: file.id!, path: thumbPath)
+            // Generate thumbnails with bounded concurrency
+            await withTaskGroup(of: Void.self) { group in
+                var launched = 0
+                for video in videos {
+                    if launched >= 8 { await group.next() }
+                    group.addTask {
+                        let thumbPath = await ThumbnailGenerator.shared.generate(for: video)
+                        if let thumbPath, let file = try? MediaFileRepository().fetchByPath(video.path),
+                           let fileId = file.id {
+                            try? MediaFileRepository().updateThumbnail(id: fileId, path: thumbPath)
+                        }
                     }
+                    launched += 1
                 }
             }
 
@@ -102,7 +113,12 @@ final class LibraryManager: ObservableObject {
         } catch {
             print("[FlickPick] Scan failed for \(path): \(error)")
         }
-        isScanning = false
+
+        activeScanCount -= 1
+        if updateSpinner && activeScanCount <= 0 {
+            isScanning = false
+            activeScanCount = 0
+        }
     }
 
     // MARK: - Private
@@ -124,9 +140,9 @@ final class LibraryManager: ObservableObject {
             guard !videoChanges.isEmpty else { return }
 
             Task { @MainActor in
-                // Re-index changed files
                 let urls = videoChanges.map { URL(fileURLWithPath: $0) }
-                try? FolderScanner.indexFiles(urls)
+                do { try FolderScanner.indexFiles(urls) }
+                catch { print("[FlickPick] Re-index failed: \(error)") }
             }
         }
         startFileWatching()
